@@ -1,22 +1,67 @@
-# AD Collector - Quick Installation Script
+# AD Collector - Interactive Installation Script
 
-The `install.sh` script provides a fully automated installation experience with system checks, Docker installation, and configuration management.
+The `install.sh` script provides a fully automated installation experience with system checks, Docker installation, and interactive configuration management.
 
 ## 🚀 Quick Start
 
-### One-Line Installation
+**⚠️ Important:** This is an **interactive** installer that requires terminal access. It **cannot** be run via `curl | bash`.
+
+### Installation Steps
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh | bash
-```
-
-Or download and run:
-
-```bash
+# Step 1: Download the installer
 wget https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh
+
+# Step 2: Make it executable
 chmod +x install.sh
+
+# Step 3: Run the interactive installer
 ./install.sh
 ```
+
+The installer will guide you through configuration with prompts for:
+- Installation directory
+- Active Directory connection details (LDAP URL, Base DN, Bind credentials)
+- Security settings
+- Port configuration
+
+---
+
+## 🔄 Alternative: Non-Interactive Installation
+
+If you need a **non-interactive** installation (e.g., for automation or if you tried `curl | bash`), use Docker Compose directly:
+
+```bash
+# 1. Create installation directory
+mkdir -p ~/ad-collector && cd ~/ad-collector
+
+# 2. Create docker-compose.yml
+cat > docker-compose.yml <<'EOF'
+services:
+  ad-collector:
+    image: fuskerrs97/ad-collector-n8n:latest
+    container_name: ad-collector
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      - LDAP_URL=ldaps://dc.example.com:636
+      - LDAP_BASE_DN=DC=example,DC=com
+      - LDAP_BIND_DN=CN=service,CN=Users,DC=example,DC=com
+      - LDAP_BIND_PASSWORD=YourPassword
+      - LDAP_TLS_VERIFY=false
+EOF
+
+# 3. Start the collector
+docker compose up -d
+
+# 4. Get your API token
+docker compose logs | grep 'API Token'
+```
+
+**📖 See:** [README.md](README.md) for complete Docker Compose documentation.
+
+---
 
 ## ✨ Features
 

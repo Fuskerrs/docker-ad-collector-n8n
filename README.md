@@ -96,17 +96,18 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 The easiest way to install AD Collector with automatic dependency checks, Docker installation, and interactive configuration.
 
-#### One-Line Installation
+**⚠️ Note:** This script requires an **interactive terminal** and cannot be run via `curl | bash`. Use the download method below.
+
+#### Installation Steps
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh | bash
-```
-
-Or download and run:
-
-```bash
+# Download the script
 wget https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh
+
+# Make it executable
 chmod +x install.sh
+
+# Run the interactive installer
 ./install.sh
 ```
 
