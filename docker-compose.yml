@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  ad-collector:
+    image: fuskerrs97/ad-collector-n8n:1.0
+    container_name: ad-collector
+    restart: unless-stopped
+
+    # Port mapping
+    ports:
+      - "8443:8443"
+
+    # Environment variables from .env file
+    env_file:
+      - .env
+
+    # Optional: Mount certificate directory
+    # Place your AD root CA certificate in ./certs/ad-root-ca.pem
+    volumes:
+      - ./certs:/app/certs:ro
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8443/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+    # Optional: Network configuration
+    # Uncomment if you want to connect to n8n on the same Docker network
+    # networks:
+    #   - n8n-network
+
+# Optional: Define networks
+# networks:
+#   n8n-network:
+#     external: true

@@ -1,0 +1,238 @@
+╔══════════════════════════════════════════════════════════════╗
+║     AD COLLECTOR FOR N8N - PUBLICATION RÉUSSIE ! 🎉         ║
+║     Version 1.0.0 - Disponible sur Docker Hub               ║
+╚══════════════════════════════════════════════════════════════╝
+
+✅ IMAGE DOCKER PUBLIÉE AVEC SUCCÈS SUR DOCKER HUB !
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 LIENS DE PUBLICATION
+
+Docker Hub Image:
+  https://hub.docker.com/r/fuskerrs97/ad-collector-n8n
+
+Tags disponibles:
+  ✅ fuskerrs97/ad-collector-n8n:1.0
+  ✅ fuskerrs97/ad-collector-n8n:latest
+
+Digest:
+  sha256:1f4ce7430f52308481be53440c68d5eec05d76ee1bb9a41fc141373e75527445
+
+Taille: 138 MB
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ DOCUMENTATION MISE À JOUR
+
+Tous les fichiers ont été mis à jour avec votre username:
+
+├─ README.md            ✅ Mis à jour (fuskerrs97)
+├─ SETUP.md             ✅ Mis à jour (fuskerrs97)
+└─ docker-compose.yml   ✅ Mis à jour (fuskerrs97)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 COMMANDES D'INSTALLATION
+
+Maintenant, n'importe qui peut installer avec:
+
+┌──────────────────────────────────────────────────────────────┐
+│ INSTALLATION SIMPLE (Docker Run)                             │
+└──────────────────────────────────────────────────────────────┘
+
+docker run -d \
+  --name ad-collector \
+  -e LDAP_URL=ldaps://your-dc.domain.com:636 \
+  -e LDAP_BASE_DN=DC=domain,DC=com \
+  -e LDAP_BIND_DN=CN=service-account,CN=Users,DC=domain,DC=com \
+  -e LDAP_BIND_PASSWORD=YourPassword \
+  -e LDAP_TLS_VERIFY=false \
+  -p 8443:8443 \
+  --restart unless-stopped \
+  fuskerrs97/ad-collector-n8n:1.0
+
+┌──────────────────────────────────────────────────────────────┐
+│ INSTALLATION AVEC DOCKER COMPOSE (Recommandé)                │
+└──────────────────────────────────────────────────────────────┘
+
+# 1. Créer le répertoire
+mkdir ad-collector && cd ad-collector
+
+# 2. Télécharger docker-compose.yml
+cat > docker-compose.yml <<'EOF'
+version: '3.8'
+
+services:
+  ad-collector:
+    image: fuskerrs97/ad-collector-n8n:1.0
+    container_name: ad-collector
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    env_file:
+      - .env
+    volumes:
+      - ./certs:/app/certs:ro
+EOF
+
+# 3. Créer .env
+cat > .env <<'EOF'
+LDAP_URL=ldaps://your-dc.domain.com:636
+LDAP_BASE_DN=DC=domain,DC=com
+LDAP_BIND_DN=CN=service-account,CN=Users,DC=domain,DC=com
+LDAP_BIND_PASSWORD=YourPassword
+LDAP_TLS_VERIFY=false
+EOF
+
+# 4. Démarrer
+docker-compose up -d
+
+# 5. Récupérer le token
+docker-compose logs | grep "API Token"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 CONFIGURATION N8N
+
+Pour utiliser avec n8n:
+
+1. Dans n8n → Credentials → New Credential
+2. Chercher: "Active Directory API"
+3. Configuration:
+   ┌────────────────────────────────────────┐
+   │ Connection Mode: Collector             │
+   │ Collector URL: http://ad-collector:8443│
+   │ API Token: (voir logs du conteneur)   │
+   │ ✅ Skip SSL Verification: Coché        │
+   └────────────────────────────────────────┘
+4. Test Connection → Save
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 STATISTIQUES
+
+Image Docker:
+├─ Nom: fuskerrs97/ad-collector-n8n
+├─ Version: 1.0.0
+├─ Taille: 138 MB
+├─ Base: node:18-alpine
+├─ Endpoints: 26 (Users, Groups, OUs)
+└─ Compatible: n8n-nodes-ad-admin v0.3.0+
+
+Publication:
+├─ Date: 2025-02-01
+├─ Status: ✅ Publié et accessible
+├─ Pulls: 0 (nouveau)
+└─ Stars: 0 (nouveau)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 PROCHAINES ÉTAPES (OPTIONNEL)
+
+1. CRÉER UN REPOSITORY GITHUB
+
+   Pour partager le code source:
+
+   a) Créer un nouveau repo sur GitHub
+      Nom: ad-collector-n8n
+      Description: Active Directory Collector API for n8n
+
+   b) Initialiser git localement
+      cd /opt/ad-collector-docker
+      git init
+      git add .
+      git commit -m "Initial release v1.0.0"
+
+   c) Push sur GitHub
+      git remote add origin https://github.com/fuskerrs97/ad-collector-n8n.git
+      git branch -M main
+      git push -u origin main
+
+   d) Créer un Release Tag
+      git tag -a v1.0.0 -m "Release v1.0.0"
+      git push origin v1.0.0
+
+2. METTRE À JOUR DOCKER HUB DESCRIPTION
+
+   a) Aller sur: https://hub.docker.com/r/fuskerrs97/ad-collector-n8n
+   b) Cliquer sur "Edit"
+   c) Copier-coller le contenu de README.md
+   d) Sauvegarder
+
+3. PROMOUVOIR L'IMAGE
+
+   Options:
+   - Partager sur la communauté n8n
+   - Poster sur Reddit (r/selfhosted, r/docker)
+   - Annoncer sur Twitter/X
+   - Créer un post de blog
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ VERIFICATION
+
+Pour vérifier que l'image est bien disponible:
+
+# Pull l'image depuis Docker Hub
+docker pull fuskerrs97/ad-collector-n8n:1.0
+
+# Vérifier les métadonnées
+docker inspect fuskerrs97/ad-collector-n8n:1.0
+
+# Tester rapidement
+docker run --rm fuskerrs97/ad-collector-n8n:1.0 node -v
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 RÉCAPITULATIF
+
+✅ Image buildée et testée localement
+✅ Image taguée avec fuskerrs97/ad-collector-n8n
+✅ Version 1.0 pushée sur Docker Hub
+✅ Version latest pushée sur Docker Hub
+✅ README.md mis à jour
+✅ SETUP.md mis à jour
+✅ docker-compose.yml mis à jour
+✅ Image publiquement accessible
+✅ Documentation complète disponible
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 FÉLICITATIONS !
+
+Votre image Docker AD Collector est maintenant:
+
+✨ PUBLIÉE sur Docker Hub
+✨ ACCESSIBLE à tous
+✨ DOCUMENTÉE complètement
+✨ PRÊTE pour production
+
+Toute personne peut maintenant:
+- Installer en 1 commande
+- Utiliser avec n8n
+- Automatiser Active Directory
+- Gérer Users/Groups/OUs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📞 SUPPORT
+
+Docker Hub:
+  https://hub.docker.com/r/fuskerrs97/ad-collector-n8n
+
+Documentation locale:
+  /opt/ad-collector-docker/README.md
+  /opt/ad-collector-docker/SETUP.md
+  /opt/ad-collector-docker/PUBLISH.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Publication Date: 2025-02-01
+Published By: fuskerrs97
+Version: 1.0.0
+Status: ✅ Live and Public
+
+BRAVO ! 🚀🎊
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

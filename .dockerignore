@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+SETUP.md
+LICENSE
+
+# Docker
+docker-compose.yml
+.dockerignore
+Dockerfile
+
+# Environment
+.env
+.env.example
+.env.*
+
+# Certificates (will be mounted)
+certs/
+
+# Node
+node_modules/
+npm-debug.log
+.npm
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.md
+!package.json

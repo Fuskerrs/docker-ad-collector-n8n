@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Certificates
+certs/
+*.pem
+*.cer
+*.crt
+*.key
+*.p12
+*.pfx
+
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.npm
+.yarn
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+
+# Build
+dist/
+build/

@@ -1,0 +1,26 @@
+{
+  "name": "ad-collector-n8n",
+  "version": "1.0.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "active-directory",
+    "ldap",
+    "n8n",
+    "ad-collector",
+    "automation"
+  ],
+  "author": "AD Collector",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "ldapjs": "^3.0.5",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
