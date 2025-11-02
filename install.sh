@@ -237,6 +237,26 @@ check_curl() {
 get_user_input() {
     print_header "Configuration"
 
+    # Check if running in non-interactive mode
+    if [ ! -t 0 ]; then
+        echo ""
+        print_error "This script requires interactive input for configuration."
+        echo ""
+        echo -e "${BOLD}You are running this script in non-interactive mode (e.g., via 'curl | bash').${NC}"
+        echo ""
+        echo -e "${CYAN}To install AD Collector, please use one of these methods:${NC}"
+        echo ""
+        echo -e "${BOLD}Method 1: Download and run (Recommended)${NC}"
+        echo -e "  ${YELLOW}wget https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh${NC}"
+        echo -e "  ${YELLOW}chmod +x install.sh${NC}"
+        echo -e "  ${YELLOW}./install.sh${NC}"
+        echo ""
+        echo -e "${BOLD}Method 2: Use Docker Compose directly${NC}"
+        echo -e "  See: ${CYAN}https://github.com/Fuskerrs/docker-ad-collector-n8n#installation${NC}"
+        echo ""
+        exit 1
+    fi
+
     echo -e "${BOLD}Please provide the following information:${NC}"
     echo ""
 
