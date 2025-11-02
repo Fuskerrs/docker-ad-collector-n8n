@@ -81,14 +81,61 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ### Prerequisites
 
-- **Docker** 20.10+ installed
 - **Active Directory** domain controller accessible via LDAPS (port 636)
 - **Service Account** with AD management permissions
 - **n8n instance** with [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) installed
+- **Linux Server** (CentOS/RHEL/AlmaLinux/Ubuntu/Debian/Fedora)
 
-### Installation
+**Note:** Docker is NOT required if using the automated installer - it will install Docker for you!
 
-#### Method 1: Docker Run (Quick Test)
+---
+
+## 📦 Installation Methods
+
+### Method 1: Automated Installation Script ⭐ **RECOMMENDED**
+
+The easiest way to install AD Collector with automatic dependency checks, Docker installation, and interactive configuration.
+
+#### One-Line Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh | bash
+```
+
+Or download and run:
+
+```bash
+wget https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+#### What the Script Does
+
+✅ **Automatically detects your OS** (CentOS, AlmaLinux, RHEL, Ubuntu, Debian, Fedora)
+✅ **Checks system requirements** (disk space, memory)
+✅ **Installs Docker** if not present
+✅ **Interactive configuration** with validation
+✅ **Tests LDAP connection** before finishing
+✅ **Displays beautiful summary table** with all connection info
+✅ **Saves API token** for easy retrieval
+
+#### Script Options
+
+```bash
+./install.sh                # Run interactive installation
+./install.sh --get-token    # Display current API token
+./install.sh --reset-token  # Regenerate API token
+./install.sh --status       # Check collector status
+./install.sh --uninstall    # Remove AD Collector
+./install.sh --help         # Show help
+```
+
+📖 **[Full Installation Script Documentation](INSTALL.md)**
+
+---
+
+### Method 2: Docker Run (Quick Test)
 
 ```bash
 docker run -d \
@@ -103,7 +150,7 @@ docker run -d \
   fuskerrs97/ad-collector-n8n:latest
 ```
 
-#### Method 2: Docker Compose (Recommended for Production)
+### Method 3: Docker Compose (Manual Setup)
 
 1. **Create project directory:**
 ```bash
