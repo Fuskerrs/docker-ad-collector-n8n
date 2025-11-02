@@ -97,8 +97,6 @@ mkdir -p ~/ad-collector && cd ~/ad-collector
 
 # Create docker-compose.yml
 cat > docker-compose.yml <<'EOF'
-version: '3.8'
-
 services:
   ad-collector:
     image: fuskerrs97/ad-collector-n8n:1.0

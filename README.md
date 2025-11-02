@@ -159,8 +159,6 @@ mkdir ad-collector && cd ad-collector
 
 2. **Create `docker-compose.yml`:**
 ```yaml
-version: '3.8'
-
 services:
   ad-collector:
     image: fuskerrs97/ad-collector-n8n:latest
