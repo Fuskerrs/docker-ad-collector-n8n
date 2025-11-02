@@ -257,8 +257,12 @@ show_prerequisites() {
     echo ""
     echo -e "${YELLOW}🔒 TLS Certificate (Optional):${NC}"
     echo -e "   ${BOLD}5.${NC} AD Root CA Certificate (if using TLS verification)"
-    echo -e "      ${CYAN}Tip: Export from your Domain Controller${NC}"
-    echo -e "      Location: Cert:\\\\LocalMachine\\\\Root"
+    echo -e "      ${CYAN}Export as Base64 PEM format from your Domain Controller${NC}"
+    echo -e "      ${CYAN}You'll be able to paste the certificate content during setup${NC}"
+    echo ""
+    echo -e "      ${BOLD}How to export on Windows:${NC}"
+    echo "      PowerShell: certutil -store Root"
+    echo -e "      Then: Right-click certificate → All Tasks → Export → Base64 PEM"
     echo ""
     echo -e "${YELLOW}⚙️  Optional Settings:${NC}"
     echo -e "   • Installation directory (default: ~/ad-collector)"
@@ -340,7 +344,7 @@ get_user_input() {
     echo -e "${YELLOW}🔌 Active Directory Connection${NC}"
     echo ""
     while true; do
-        read -p "   LDAP/LDAPS URL: " LDAP_URL
+        read -p "   LDAP/LDAPS URL (ex: ldaps://dc.example.com:636): " LDAP_URL
         if [[ $LDAP_URL =~ ^ldaps?:// ]]; then
             break
         else
@@ -351,7 +355,7 @@ get_user_input() {
 
     # Base DN
     while true; do
-        read -p "   Base DN: " LDAP_BASE_DN
+        read -p "   Base DN (ex: DC=example,DC=com): " LDAP_BASE_DN
         if [[ $LDAP_BASE_DN =~ DC= ]]; then
             break
         else
@@ -362,7 +366,7 @@ get_user_input() {
 
     # Bind DN
     while true; do
-        read -p "   Bind DN: " LDAP_BIND_DN
+        read -p "   Bind DN (ex: CN=n8n-service,CN=Users,DC=example,DC=com): " LDAP_BIND_DN
         if [[ -n $LDAP_BIND_DN ]]; then
             break
         else
@@ -399,30 +403,39 @@ get_user_input() {
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         LDAP_TLS_VERIFY="true"
         echo ""
-        echo -e "   ${CYAN}You will need to provide the AD Root CA certificate.${NC}"
+        echo -e "   ${CYAN}You need to provide the AD Root CA certificate.${NC}"
+        echo -e "   ${CYAN}Tip: Export from your Domain Controller as Base64 PEM format${NC}"
         echo ""
 
-        # Ask for certificate
-        while true; do
-            read -p "   Path to AD Root CA certificate (or 'skip' to add later): " CERT_PATH
+        read -p "   Do you want to paste the certificate now? (y/n) [y]: " -n 1 -r
+        echo ""
+        echo ""
 
-            if [[ "$CERT_PATH" == "skip" ]]; then
-                print_warning "   Skipping certificate. You'll need to add it manually to ./certs/"
-                CERT_PATH=""
-                break
-            elif [[ -f "$CERT_PATH" ]]; then
-                print_success "   Certificate found: $CERT_PATH"
-                break
-            elif [[ -z "$CERT_PATH" ]]; then
-                print_error "   Please provide a certificate path or type 'skip'"
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            echo -e "   ${YELLOW}Paste your certificate content below:${NC}"
+            echo -e "   ${CYAN}(Start with -----BEGIN CERTIFICATE-----)${NC}"
+            echo -e "   ${CYAN}(End with -----END CERTIFICATE-----)${NC}"
+            echo -e "   ${CYAN}(Press CTRL+D on a new line when finished)${NC}"
+            echo ""
+
+            CERT_CONTENT=$(cat)
+
+            # Validate it looks like a certificate
+            if [[ $CERT_CONTENT == *"BEGIN CERTIFICATE"* ]] && [[ $CERT_CONTENT == *"END CERTIFICATE"* ]]; then
+                print_success "   Certificate content received successfully"
             else
-                print_error "   File not found: $CERT_PATH"
+                print_warning "   Certificate format may be invalid. Continuing anyway..."
             fi
-        done
-        echo ""
+            echo ""
+        else
+            CERT_CONTENT=""
+            echo ""
+            print_info "   You'll need to add the certificate manually to ./certs/ad-root-ca.crt"
+            echo ""
+        fi
     else
         LDAP_TLS_VERIFY="false"
-        CERT_PATH=""
+        CERT_CONTENT=""
         print_info "   Certificate verification disabled (recommended for development)"
         echo ""
     fi
@@ -516,13 +529,13 @@ EOF
     # Secure .env file
     chmod 600 .env
 
-    # Copy certificate if provided
-    if [ -n "$CERT_PATH" ] && [ -f "$CERT_PATH" ]; then
-        print_step "Copying AD Root CA certificate..."
+    # Create certificate if provided
+    if [ -n "$CERT_CONTENT" ]; then
+        print_step "Creating AD Root CA certificate..."
         mkdir -p ./certs
-        cp "$CERT_PATH" ./certs/ad-root-ca.crt
+        echo "$CERT_CONTENT" > ./certs/ad-root-ca.crt
         chmod 644 ./certs/ad-root-ca.crt
-        print_success "Certificate copied to ./certs/ad-root-ca.crt"
+        print_success "Certificate saved to ./certs/ad-root-ca.crt"
     fi
 
     print_success "Project created at $INSTALL_DIR"
