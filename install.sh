@@ -234,6 +234,43 @@ check_curl() {
 # Interactive Configuration
 ################################################################################
 
+show_prerequisites() {
+    print_header "Prerequisites Checklist"
+
+    echo -e "${BOLD}Before starting, please gather the following information:${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}📋 Active Directory Information:${NC}"
+    echo -e "   ${BOLD}1.${NC} LDAP/LDAPS Server URL"
+    echo -e "      Example: ldaps://dc.example.com:636"
+    echo -e "      ${CYAN}Tip: Use LDAPS (port 636) for encrypted connections${NC}"
+    echo ""
+    echo -e "   ${BOLD}2.${NC} Base DN (Distinguished Name)"
+    echo -e "      Example: DC=example,DC=com"
+    echo ""
+    echo -e "   ${BOLD}3.${NC} Service Account Bind DN"
+    echo -e "      Example: CN=n8n-service,CN=Users,DC=example,DC=com"
+    echo -e "      ${CYAN}Tip: Create a dedicated service account for n8n${NC}"
+    echo ""
+    echo -e "   ${BOLD}4.${NC} Service Account Password"
+    echo ""
+    echo -e "${YELLOW}🔒 TLS Certificate (Optional):${NC}"
+    echo -e "   ${BOLD}5.${NC} AD Root CA Certificate (if using TLS verification)"
+    echo -e "      ${CYAN}Tip: Export from your Domain Controller${NC}"
+    echo -e "      Location: Cert:\\\\LocalMachine\\\\Root"
+    echo ""
+    echo -e "${YELLOW}⚙️  Optional Settings:${NC}"
+    echo -e "   • Installation directory (default: ~/ad-collector)"
+    echo -e "   • Collector port (default: 8443)"
+    echo -e "   • Token expiry duration (default: 365d)"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    read -p "Press ENTER when you're ready to continue... "
+    echo ""
+}
+
 get_user_input() {
     print_header "Configuration"
 
@@ -287,80 +324,121 @@ get_user_input() {
         exit 1
     fi
 
-    echo -e "${BOLD}Please provide the following information:${NC}"
+    echo -e "${BOLD}Let's configure your AD Collector...${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
     # Installation directory
-    read -p "Installation directory [$INSTALL_DIR]: " input
+    echo -e "${YELLOW}📁 Installation Directory${NC}"
+    read -p "   Where to install? [$INSTALL_DIR]: " input
     INSTALL_DIR=${input:-$INSTALL_DIR}
+    echo ""
 
     # LDAP URL
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔌 Active Directory Connection${NC}"
     echo ""
-    echo -e "${YELLOW}Active Directory Configuration:${NC}"
     while true; do
-        read -p "LDAP/LDAPS URL (e.g., ldaps://dc.example.com:636): " LDAP_URL
+        read -p "   LDAP/LDAPS URL: " LDAP_URL
         if [[ $LDAP_URL =~ ^ldaps?:// ]]; then
             break
         else
-            print_error "Invalid LDAP URL. Must start with ldap:// or ldaps://"
+            print_error "   Invalid URL. Must start with ldap:// or ldaps://"
         fi
     done
+    echo ""
 
     # Base DN
     while true; do
-        read -p "Base DN (e.g., DC=example,DC=com): " LDAP_BASE_DN
+        read -p "   Base DN: " LDAP_BASE_DN
         if [[ $LDAP_BASE_DN =~ DC= ]]; then
             break
         else
-            print_error "Invalid Base DN. Must contain DC="
+            print_error "   Invalid Base DN. Must contain DC="
         fi
     done
+    echo ""
 
     # Bind DN
     while true; do
-        read -p "Bind DN (e.g., CN=service,CN=Users,DC=example,DC=com): " LDAP_BIND_DN
+        read -p "   Bind DN: " LDAP_BIND_DN
         if [[ -n $LDAP_BIND_DN ]]; then
             break
         else
-            print_error "Bind DN cannot be empty"
+            print_error "   Bind DN cannot be empty"
         fi
     done
+    echo ""
 
     # Bind Password
     while true; do
-        read -sp "Bind Password: " LDAP_BIND_PASSWORD
+        read -sp "   Bind Password: " LDAP_BIND_PASSWORD
         echo ""
         if [[ -n $LDAP_BIND_PASSWORD ]]; then
-            read -sp "Confirm Password: " LDAP_BIND_PASSWORD_CONFIRM
+            read -sp "   Confirm Password: " LDAP_BIND_PASSWORD_CONFIRM
             echo ""
             if [ "$LDAP_BIND_PASSWORD" = "$LDAP_BIND_PASSWORD_CONFIRM" ]; then
                 break
             else
-                print_error "Passwords do not match"
+                print_error "   Passwords do not match. Please try again."
+                echo ""
             fi
         else
-            print_error "Password cannot be empty"
+            print_error "   Password cannot be empty"
         fi
     done
+    echo ""
 
     # TLS Verify
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔒 TLS Certificate Verification${NC}"
     echo ""
-    read -p "Verify TLS certificates? (y/n) [n]: " -n 1 -r
+    read -p "   Verify TLS certificates? (y/n) [n]: " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         LDAP_TLS_VERIFY="true"
+        echo ""
+        echo -e "   ${CYAN}You will need to provide the AD Root CA certificate.${NC}"
+        echo ""
+
+        # Ask for certificate
+        while true; do
+            read -p "   Path to AD Root CA certificate (or 'skip' to add later): " CERT_PATH
+
+            if [[ "$CERT_PATH" == "skip" ]]; then
+                print_warning "   Skipping certificate. You'll need to add it manually to ./certs/"
+                CERT_PATH=""
+                break
+            elif [[ -f "$CERT_PATH" ]]; then
+                print_success "   Certificate found: $CERT_PATH"
+                break
+            elif [[ -z "$CERT_PATH" ]]; then
+                print_error "   Please provide a certificate path or type 'skip'"
+            else
+                print_error "   File not found: $CERT_PATH"
+            fi
+        done
+        echo ""
     else
         LDAP_TLS_VERIFY="false"
+        CERT_PATH=""
+        print_info "   Certificate verification disabled (recommended for development)"
+        echo ""
     fi
 
     # Port
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}⚙️  Optional Settings${NC}"
     echo ""
-    read -p "Collector port [$DEFAULT_PORT]: " input
+    read -p "   Collector port [$DEFAULT_PORT]: " input
     PORT=${input:-$DEFAULT_PORT}
+    echo ""
 
     # Token expiry
-    read -p "Token expiry (e.g., 365d, 1y) [365d]: " input
+    read -p "   Token expiry (e.g., 365d, 1y) [365d]: " input
     TOKEN_EXPIRY=${input:-365d}
+    echo ""
 }
 
 show_configuration_summary() {
@@ -437,6 +515,15 @@ EOF
 
     # Secure .env file
     chmod 600 .env
+
+    # Copy certificate if provided
+    if [ -n "$CERT_PATH" ] && [ -f "$CERT_PATH" ]; then
+        print_step "Copying AD Root CA certificate..."
+        mkdir -p ./certs
+        cp "$CERT_PATH" ./certs/ad-root-ca.crt
+        chmod 644 ./certs/ad-root-ca.crt
+        print_success "Certificate copied to ./certs/ad-root-ca.crt"
+    fi
 
     print_success "Project created at $INSTALL_DIR"
 }
@@ -565,40 +652,48 @@ show_summary() {
     printf "║ %-30s %-41s ║\n" "LDAP URL:" "${LDAP_URL:0:41}"
     printf "║ %-30s %-41s ║\n" "Base DN:" "${LDAP_BASE_DN:0:41}"
     printf "║ %-30s %-41s ║\n" "TLS Verify:" "$LDAP_TLS_VERIFY"
-    echo -e "${BOLD}╠════════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${BOLD}║ API Token (save this!)                                                 ║${NC}"
-    echo -e "${BOLD}╠════════════════════════════════════════════════════════════════════════╣${NC}"
-
-    if [ -n "$TOKEN" ]; then
-        # Split token in lines of 70 chars
-        echo "$TOKEN" | fold -w 70 | while read line; do
-            printf "║ %-72s ║\n" "$line"
-        done
-    else
-        printf "║ %-72s ║\n" "Run: docker compose logs | grep 'API Token'"
-    fi
-
     echo -e "${BOLD}╚════════════════════════════════════════════════════════════════════════╝${NC}"
 
+    # Token displayed SEPARATELY for easy copy-paste
     echo ""
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}${YELLOW}🔑 Your API Token (save this!)${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    if [ -n "$TOKEN" ]; then
+        echo -e "${GREEN}${TOKEN}${NC}"
+    else
+        echo -e "${RED}Could not retrieve token automatically.${NC}"
+        echo -e "${YELLOW}Run: docker compose logs | grep 'API Token'${NC}"
+    fi
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo ""
+
     echo -e "${BOLD}${GREEN}Next Steps:${NC}"
     echo ""
-    echo -e "  ${BOLD}1.${NC} Configure n8n credentials:"
+    echo -e "  ${BOLD}1. Copy your API token${NC} (displayed above)"
+    echo ""
+    echo -e "  ${BOLD}2. Configure n8n credentials:${NC}"
+    echo -e "     • Go to n8n → Credentials → Active Directory API"
     echo -e "     • Connection Mode: ${CYAN}Collector${NC}"
     echo -e "     • Collector URL: ${CYAN}http://$SERVER_IP:$PORT${NC}"
-    echo -e "     • API Token: ${CYAN}[token above]${NC}"
+    echo -e "     • API Token: ${CYAN}[paste token from above]${NC}"
     echo -e "     • Skip SSL Verification: ${CYAN}✓ Checked${NC}"
     echo ""
-    echo -e "  ${BOLD}2.${NC} Useful commands:"
-    echo -e "     • View logs:        ${CYAN}cd $INSTALL_DIR && docker compose logs -f${NC}"
-    echo -e "     • Stop collector:   ${CYAN}cd $INSTALL_DIR && docker compose stop${NC}"
-    echo -e "     • Start collector:  ${CYAN}cd $INSTALL_DIR && docker compose start${NC}"
-    echo -e "     • Restart (new token): ${CYAN}cd $INSTALL_DIR && docker compose restart${NC}"
-    echo -e "     • Remove:           ${CYAN}cd $INSTALL_DIR && docker compose down${NC}"
+    echo -e "  ${BOLD}3. Useful commands:${NC}"
+    echo -e "     • View logs:          ${CYAN}cd $INSTALL_DIR && docker compose logs -f${NC}"
+    echo -e "     • Get token again:    ${CYAN}cd $INSTALL_DIR && docker compose logs | grep 'API Token'${NC}"
+    echo -e "     • Stop collector:     ${CYAN}cd $INSTALL_DIR && docker compose stop${NC}"
+    echo -e "     • Start collector:    ${CYAN}cd $INSTALL_DIR && docker compose start${NC}"
+    echo -e "     • Restart (new token):${CYAN}cd $INSTALL_DIR && docker compose restart${NC}"
+    echo -e "     • Remove:             ${CYAN}cd $INSTALL_DIR && docker compose down${NC}"
     echo ""
-    echo -e "  ${BOLD}3.${NC} Documentation:"
+    echo -e "  ${BOLD}4. Documentation:${NC}"
     echo -e "     • Docker Hub: ${CYAN}https://hub.docker.com/r/fuskerrs97/ad-collector-n8n${NC}"
-    echo -e "     • GitHub: ${CYAN}https://github.com/Fuskerrs/docker-ad-collector-n8n${NC}"
+    echo -e "     • GitHub:     ${CYAN}https://github.com/Fuskerrs/docker-ad-collector-n8n${NC}"
     echo ""
 
     # Save summary to file
@@ -817,6 +912,7 @@ main() {
         fi
     fi
 
+    show_prerequisites
     get_user_input
     show_configuration_summary
     create_project
