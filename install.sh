@@ -57,10 +57,18 @@ print_step() {
 check_root() {
     if [ "$EUID" -eq 0 ]; then
         print_warning "Running as root. This is not recommended for production."
-        read -p "Continue anyway? (y/n): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+
+        # Check if we have an interactive terminal
+        if [ -t 0 ]; then
+            # Interactive mode - ask for confirmation
+            read -p "Continue anyway? (y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            # Non-interactive mode (e.g., curl | bash) - just warn and continue
+            echo "Non-interactive mode detected. Continuing installation..."
         fi
     fi
 }
