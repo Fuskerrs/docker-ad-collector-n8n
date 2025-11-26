@@ -1026,6 +1026,12 @@ reset_token() {
         exit 1
     fi
 
+    # Initialize Docker Compose command
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required"
+        exit 1
+    fi
+
     print_step "Restarting container to generate new token..."
     $DOCKER_COMPOSE_CMD restart
 
@@ -1057,6 +1063,12 @@ show_token() {
         exit 1
     fi
 
+    # Initialize Docker Compose command
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required"
+        exit 1
+    fi
+
     print_step "Retrieving current token..."
 
     # More robust token extraction
@@ -1082,6 +1094,12 @@ show_token() {
 show_status() {
     if [ ! -f "docker-compose.yml" ]; then
         print_error "Not in AD Collector directory"
+        exit 1
+    fi
+
+    # Initialize Docker Compose command
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required"
         exit 1
     fi
 
@@ -1114,6 +1132,12 @@ update() {
     if [ ! -f "docker-compose.yml" ]; then
         print_error "Not in AD Collector directory"
         print_info "cd to your installation directory first"
+        exit 1
+    fi
+
+    # Initialize Docker Compose command
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required"
         exit 1
     fi
 
@@ -1150,6 +1174,12 @@ uninstall() {
 
     if [ ! -f "docker-compose.yml" ]; then
         print_error "Not in AD Collector directory"
+        exit 1
+    fi
+
+    # Initialize Docker Compose command
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required"
         exit 1
     fi
 
