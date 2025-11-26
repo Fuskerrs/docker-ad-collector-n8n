@@ -155,9 +155,19 @@ async function searchMany(filter, attributes = ['*'], maxResults = 1000) {
   });
 }
 
+// LDAP escape function to prevent injection
+function escapeLdap(str) {
+  if (!str) return str;
+  return str.replace(/\\/g, '\\5c')
+    .replace(/\*/g, '\\2a')
+    .replace(/\(/g, '\\28')
+    .replace(/\)/g, '\\29')
+    .replace(/\0/g, '\\00');
+}
+
 // Helper to get DN from samAccountName
 async function getDnFromSam(samAccountName) {
-  const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+  const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
   return user.objectName;
 }
 
@@ -198,7 +208,7 @@ app.post('/api/users/get', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'samAccountName is required' });
     }
 
-    const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+    const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
     res.json({ success: true, user });
   } catch (error) {
     if (error.message === 'Entry not found') {
@@ -218,7 +228,7 @@ app.post('/api/users/find-by-sam', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'samAccountName is required' });
     }
 
-    const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+    const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
     res.json({ success: true, user, found: true });
   } catch (error) {
     if (error.message === 'Entry not found') {
@@ -555,7 +565,7 @@ app.post('/api/users/check-password-expiry', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'samAccountName is required' });
     }
 
-    const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+    const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
 
     const pwdLastSetAttr = user.attributes.find(a => a.type === 'pwdLastSet');
     const pwdLastSet = pwdLastSetAttr ? pwdLastSetAttr.values[0] : null;
@@ -563,7 +573,7 @@ app.post('/api/users/check-password-expiry', authenticate, async (req, res) => {
     const accountExpiresAttr = user.attributes.find(a => a.type === 'accountExpires');
     const accountExpires = accountExpiresAttr ? accountExpiresAttr.values[0] : null;
 
-    const maxPwdAge = 90;
+    const maxPwdAge = parseInt(process.env.MAX_PWD_AGE_DAYS) || 90;
 
     const willExpire = pwdLastSet && pwdLastSet !== '0';
 
@@ -638,7 +648,7 @@ app.post('/api/users/get-groups', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'samAccountName is required' });
     }
 
-    const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+    const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
     const memberOfAttr = user.attributes.find(a => a.type === 'memberOf');
     const groups = memberOfAttr ? memberOfAttr.values : [];
 
@@ -662,7 +672,7 @@ app.post('/api/users/get-activity', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'samAccountName is required' });
     }
 
-    const user = await searchOne(`(sAMAccountName=${samAccountName})`);
+    const user = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
 
     const lastLogonAttr = user.attributes.find(a => a.type === 'lastLogon');
     const lastLogonTimestampAttr = user.attributes.find(a => a.type === 'lastLogonTimestamp');
@@ -693,9 +703,9 @@ app.post('/api/groups/get', authenticate, async (req, res) => {
 
     let filter;
     if (dn) {
-      filter = `(distinguishedName=${dn})`;
+      filter = `(distinguishedName=${escapeLdap(dn)})`;
     } else if (samAccountName) {
-      filter = `(sAMAccountName=${samAccountName})`;
+      filter = `(sAMAccountName=${escapeLdap(samAccountName)})`;
     } else {
       return res.status(400).json({
         success: false,
@@ -775,7 +785,7 @@ app.post('/api/groups/modify', authenticate, async (req, res) => {
 
     let groupDn = dn;
     if (!groupDn && samAccountName) {
-      const group = await searchOne(`(sAMAccountName=${samAccountName})`);
+      const group = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
       groupDn = group.objectName;
     }
 
@@ -824,7 +834,7 @@ app.post('/api/groups/delete', authenticate, async (req, res) => {
 
     let groupDn = dn;
     if (!groupDn && samAccountName) {
-      const group = await searchOne(`(sAMAccountName=${samAccountName})`);
+      const group = await searchOne(`(sAMAccountName=${escapeLdap(samAccountName)})`);
       groupDn = group.objectName;
     }
 
@@ -936,7 +946,8 @@ app.post('/api/groups/search', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'searchTerm is required' });
     }
 
-    const filter = `(&(objectClass=group)(|(cn=*${searchTerm}*)(sAMAccountName=*${searchTerm}*)))`;
+    const escapedTerm = escapeLdap(searchTerm);
+    const filter = `(&(objectClass=group)(|(cn=*${escapedTerm}*)(sAMAccountName=*${escapedTerm}*)))`;
     const limit = maxResults || 100;
 
     const groups = await searchMany(filter, ['*'], limit);
@@ -957,7 +968,7 @@ app.post('/api/ous/get', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'dn is required' });
     }
 
-    const ou = await searchOne(`(distinguishedName=${dn})`);
+    const ou = await searchOne(`(distinguishedName=${escapeLdap(dn)})`);
     res.json({ success: true, ou });
   } catch (error) {
     if (error.message === 'Entry not found') {
@@ -1090,7 +1101,8 @@ app.post('/api/ous/search', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'searchTerm is required' });
     }
 
-    const filter = `(&(objectClass=organizationalUnit)(ou=*${searchTerm}*))`;
+    const escapedTerm = escapeLdap(searchTerm);
+    const filter = `(&(objectClass=organizationalUnit)(ou=*${escapedTerm}*))`;
     const limit = maxResults || 100;
 
     const ous = await searchMany(filter, ['*'], limit);

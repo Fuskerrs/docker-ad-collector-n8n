@@ -171,6 +171,46 @@ check_docker() {
     fi
 }
 
+detect_docker_compose() {
+    print_step "Detecting Docker Compose version..."
+
+    # Check for Docker Compose v2 (plugin)
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+        DOCKER_COMPOSE_VERSION=$(docker compose version --short 2>/dev/null || echo "v2")
+        print_success "Docker Compose v2 detected ($DOCKER_COMPOSE_VERSION)"
+        return 0
+    # Check for Docker Compose v1 (standalone)
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        DOCKER_COMPOSE_VERSION=$(docker-compose version --short 2>/dev/null || echo "v1")
+        print_success "Docker Compose v1 detected ($DOCKER_COMPOSE_VERSION)"
+        return 0
+    else
+        print_error "Docker Compose not found"
+        print_info "Installing Docker Compose plugin..."
+
+        # Try to install compose plugin
+        if [ "$PACKAGE_MANAGER" = "dnf" ] || [ "$PACKAGE_MANAGER" = "yum" ]; then
+            sudo $PACKAGE_MANAGER install -y docker-compose-plugin
+        elif [ "$PACKAGE_MANAGER" = "apt" ]; then
+            sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+        else
+            print_error "Cannot auto-install Docker Compose"
+            return 1
+        fi
+
+        # Re-check
+        if docker compose version &> /dev/null; then
+            DOCKER_COMPOSE_CMD="docker compose"
+            print_success "Docker Compose plugin installed"
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
 install_docker() {
     print_header "Installing Docker"
 
@@ -230,6 +270,155 @@ check_curl() {
     fi
 }
 
+check_ldap_utils() {
+    if ! command -v ldapsearch &> /dev/null; then
+        print_step "Installing LDAP utilities..."
+        case $PACKAGE_MANAGER in
+            dnf|yum)
+                sudo $PACKAGE_MANAGER install -y openldap-clients
+                ;;
+            apt)
+                sudo apt-get update && sudo apt-get install -y ldap-utils
+                ;;
+        esac
+    fi
+}
+
+################################################################################
+# Certificate Auto-Fetch
+################################################################################
+
+auto_fetch_certificate() {
+    print_header "Automatic Certificate Retrieval"
+
+    echo -e "${BOLD}Fetching AD Root CA Certificate automatically...${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}📋 Required Permissions:${NC}"
+    echo ""
+    echo -e "${BOLD}Minimum permissions needed:${NC}"
+    echo -e "  ✓ ${GREEN}Domain User${NC} (standard authenticated user)"
+    echo -e "  ✓ ${GREEN}Read access${NC} to Public Key Services container"
+    echo -e "  ✓ ${GREEN}LDAP read access${NC} (granted by default to all domain users)"
+    echo ""
+    echo -e "${CYAN}The service account you provided has these rights by default.${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    # Extract DC host from LDAP_URL
+    LDAP_HOST=$(echo "$LDAP_URL" | sed -E 's|ldaps?://([^:]+).*|\1|')
+    LDAP_PORT=$(echo "$LDAP_URL" | grep -oP ':\K[0-9]+$' || echo "636")
+
+    # Determine if using LDAPS
+    if [[ "$LDAP_URL" =~ ^ldaps:// ]]; then
+        LDAP_PROTOCOL="ldaps"
+    else
+        LDAP_PROTOCOL="ldap"
+    fi
+
+    print_step "Attempting to fetch certificate from $LDAP_HOST..."
+    echo ""
+
+    # Try to find the CA certificate
+    # Method 1: Query the AIA container for the CA certificate
+    print_info "Searching for Root CA certificate in Active Directory..."
+
+    # Extract domain components for CA search
+    DOMAIN_DN="$LDAP_BASE_DN"
+
+    # Try multiple common CA locations
+    CA_SEARCH_BASES=(
+        "CN=AIA,CN=Public Key Services,CN=Services,CN=Configuration,$DOMAIN_DN"
+        "CN=Certification Authorities,CN=Public Key Services,CN=Services,CN=Configuration,$DOMAIN_DN"
+        "CN=NTAuthCertificates,CN=Public Key Services,CN=Services,CN=Configuration,$DOMAIN_DN"
+    )
+
+    CERT_FETCHED=false
+
+    for CA_BASE in "${CA_SEARCH_BASES[@]}"; do
+        print_step "Trying: $CA_BASE"
+
+        # Use LDAPTLS_REQCERT=never to bypass cert verification during fetch
+        CERT_DATA=$(LDAPTLS_REQCERT=never ldapsearch -x -H "${LDAP_PROTOCOL}://${LDAP_HOST}:${LDAP_PORT}" \
+            -D "$LDAP_BIND_DN" \
+            -w "$LDAP_BIND_PASSWORD" \
+            -b "$CA_BASE" \
+            -s sub \
+            "(objectClass=*)" \
+            cACertificate \
+            -o ldif-wrap=no 2>/dev/null | \
+            grep "cACertificate::" | \
+            head -1 | \
+            sed 's/cACertificate:: //')
+
+        if [ -n "$CERT_DATA" ]; then
+            print_success "Found certificate at: $CA_BASE"
+
+            # Decode base64 and convert DER to PEM
+            mkdir -p ./certs
+            echo "$CERT_DATA" | base64 -d | \
+                openssl x509 -inform DER -outform PEM > ./certs/ad-root-ca.crt 2>/dev/null
+
+            if [ -f "./certs/ad-root-ca.crt" ] && [ -s "./certs/ad-root-ca.crt" ]; then
+                # Verify it's a valid certificate
+                CERT_SUBJECT=$(openssl x509 -in ./certs/ad-root-ca.crt -noout -subject 2>/dev/null | sed 's/subject=//')
+                CERT_ISSUER=$(openssl x509 -in ./certs/ad-root-ca.crt -noout -issuer 2>/dev/null | sed 's/issuer=//')
+
+                echo ""
+                print_success "Certificate retrieved and saved successfully!"
+                echo ""
+                echo -e "${BOLD}Certificate Details:${NC}"
+                echo -e "  Subject: ${CYAN}$CERT_SUBJECT${NC}"
+                echo -e "  Issuer:  ${CYAN}$CERT_ISSUER${NC}"
+                echo ""
+
+                chmod 644 ./certs/ad-root-ca.crt
+                CERT_FETCHED=true
+                CERT_CONTENT=$(cat ./certs/ad-root-ca.crt)
+                break
+            fi
+        fi
+    done
+
+    if [ "$CERT_FETCHED" = false ]; then
+        print_warning "Could not automatically fetch the certificate"
+        echo ""
+        echo -e "${YELLOW}This can happen if:${NC}"
+        echo -e "  • Your AD doesn't store certs in standard locations"
+        echo -e "  • The service account lacks read permissions"
+        echo -e "  • Network connectivity issues"
+        echo ""
+
+        read -p "Do you want to manually paste the certificate? (y/n): " -n 1 -r
+        echo ""
+
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo ""
+            echo -e "   ${YELLOW}Paste your ROOT CA certificate below:${NC}"
+            echo -e "   ${CYAN}(Start with -----BEGIN CERTIFICATE-----)${NC}"
+            echo -e "   ${CYAN}(End with -----END CERTIFICATE-----)${NC}"
+            echo -e "   ${CYAN}(Press CTRL+D on a new line when finished)${NC}"
+            echo ""
+
+            CERT_CONTENT=$(cat)
+
+            if [[ $CERT_CONTENT == *"BEGIN CERTIFICATE"* ]] && [[ $CERT_CONTENT == *"END CERTIFICATE"* ]]; then
+                mkdir -p ./certs
+                echo "$CERT_CONTENT" > ./certs/ad-root-ca.crt
+                print_success "Certificate saved manually"
+                CERT_FETCHED=true
+            else
+                print_error "Invalid certificate format"
+                CERT_CONTENT=""
+            fi
+        else
+            CERT_CONTENT=""
+        fi
+    fi
+
+    echo ""
+}
+
 ################################################################################
 # Interactive Configuration
 ################################################################################
@@ -249,20 +438,25 @@ show_prerequisites() {
     echo -e "   ${BOLD}2.${NC} Base DN (Distinguished Name)"
     echo -e "      Example: DC=example,DC=com"
     echo ""
-    echo -e "   ${BOLD}3.${NC} Service Account Bind DN"
-    echo -e "      Example: CN=n8n-service,CN=Users,DC=example,DC=com"
-    echo -e "      ${CYAN}Tip: Create a dedicated service account for n8n${NC}"
+    echo -e "   ${BOLD}3.${NC} Service Account Credentials"
+    echo -e "      Bind DN: CN=n8n-service,CN=Users,DC=example,DC=com"
+    echo -e "      Password: [your service account password]"
     echo ""
-    echo -e "   ${BOLD}4.${NC} Service Account Password"
+    echo -e "      ${CYAN}${BOLD}Required Permissions for Service Account:${NC}"
+    echo -e "      ${GREEN}✓ Domain User${NC} (standard authenticated user) - ${CYAN}Already granted${NC}"
+    echo -e "      ${GREEN}✓ Read${NC} on target OUs/Users/Groups - ${YELLOW}Required for operations${NC}"
+    echo -e "      ${GREEN}✓ Read${NC} Public Key Services container - ${CYAN}For auto cert retrieval${NC}"
+    echo -e "      ${GREEN}✓ Create/Modify${NC} users/groups - ${YELLOW}For create/modify operations${NC}"
     echo ""
-    echo -e "${YELLOW}🔒 TLS Certificate (Optional):${NC}"
-    echo -e "   ${BOLD}5.${NC} AD Root CA Certificate (if using TLS verification)"
-    echo -e "      ${CYAN}Export as Base64 PEM format from your Domain Controller${NC}"
-    echo -e "      ${CYAN}You'll be able to paste the certificate content during setup${NC}"
+    echo -e "      ${BOLD}Recommended delegated permissions:${NC}"
+    echo -e "      • Reset user passwords and force password change at next logon"
+    echo -e "      • Create, delete, and manage user accounts"
+    echo -e "      • Modify the membership of a group"
     echo ""
-    echo -e "      ${BOLD}How to export on Windows:${NC}"
-    echo "      PowerShell: certutil -store Root"
-    echo -e "      Then: Right-click certificate → All Tasks → Export → Base64 PEM"
+    echo -e "${YELLOW}🔒 TLS Certificate:${NC}"
+    echo -e "   ${GREEN}✓ Automatically retrieved${NC} from Active Directory"
+    echo -e "   ${CYAN}The script will fetch the Root CA certificate using your service account${NC}"
+    echo -e "   ${CYAN}No manual export needed!${NC}"
     echo ""
     echo -e "${YELLOW}⚙️  Optional Settings:${NC}"
     echo -e "   • Installation directory (default: ~/ad-collector)"
@@ -398,95 +592,28 @@ get_user_input() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${YELLOW}🔒 TLS Certificate Verification${NC}"
     echo ""
-    read -p "   Verify TLS certificates? (y/n) [n]: " -n 1 -r
+    echo -e "${BOLD}For production environments, TLS verification is recommended.${NC}"
     echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "   Enable TLS certificate verification? (y/n) [y]: " -n 1 -r
+    echo ""
+    echo ""
+
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         LDAP_TLS_VERIFY="true"
+
+        echo -e "${GREEN}✓ TLS verification enabled${NC}"
         echo ""
-        echo -e "   ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "   ${YELLOW}⚠️  IMPORTANT: ROOT CA Certificate Required${NC}"
-        echo -e "   ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        echo -e "   ${BOLD}You need the ROOT CA certificate, not the server certificate!${NC}"
-        echo ""
-        echo -e "   ${CYAN}Correct certificate:${NC}"
-        echo "     - Subject: CN=Your-CA-Name"
-        echo "     - Issuer:  CN=Your-CA-Name (same = self-signed ROOT CA)"
-        echo ""
-        echo -e "   ${RED}Wrong certificate (DO NOT USE):${NC}"
-        echo "     - Subject: CN=dc.example.com (server name)"
-        echo "     - Issuer:  CN=Your-CA-Name (different from Subject)"
-        echo ""
-        echo -e "   ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "   ${YELLOW}📋 How to get the ROOT CA certificate:${NC}"
-        echo -e "   ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        echo -e "   ${BOLD}Method 1: From Linux (using ldapsearch):${NC}"
-        echo ""
-        echo -e "   ${GREEN}# Install ldapsearch if needed${NC}"
-        echo "   yum install -y openldap-clients  # RHEL/CentOS/Rocky"
-        echo "   apt install -y ldap-utils        # Debian/Ubuntu"
-        echo ""
-        echo -e "   ${GREEN}# Replace the following values:${NC}"
-        echo "   # - DC_IP: Your Domain Controller IP (e.g., 192.168.1.10)"
-        echo "   # - USERNAME: Service account (e.g., CN=svc,CN=Users,DC=example,DC=com)"
-        echo "   # - PASSWORD: Service account password"
-        echo "   # - CA_NAME: Your CA name (e.g., Example-CA)"
-        echo "   # - BASE_DN: Your domain (e.g., DC=example,DC=com)"
-        echo ""
-        echo -e "   ${YELLOW}LDAPTLS_REQCERT=never ldapsearch -x -H ldaps://DC_IP:636 \\${NC}"
-        echo -e "   ${YELLOW}  -D \"USERNAME\" -w \"PASSWORD\" \\${NC}"
-        echo -e "   ${YELLOW}  -b \"CN=CA_NAME,CN=AIA,CN=Public Key Services,CN=Services,CN=Configuration,BASE_DN\" \\${NC}"
-        echo -e "   ${YELLOW}  -s base \"(objectClass=*)\" cACertificate -o ldif-wrap=no | \\${NC}"
-        echo -e "   ${YELLOW}  grep \"cACertificate::\" | sed 's/cACertificate:: //' | base64 -d | \\${NC}"
-        echo -e "   ${YELLOW}  openssl x509 -inform DER -outform PEM > ad-root-ca.crt${NC}"
-        echo ""
-        echo -e "   ${BOLD}Method 2: From Windows Domain Controller:${NC}"
-        echo ""
-        echo "   a) Using GUI:"
-        echo "      1. Open certmgr.msc"
-        echo "      2. Navigate to: Trusted Root Certification Authorities → Certificates"
-        echo "      3. Find your CA certificate"
-        echo "      4. Right-click → All Tasks → Export"
-        echo "      5. Choose: Base-64 encoded X.509 (.CER)"
-        echo ""
-        echo "   b) Using PowerShell:"
-        echo -e "      ${YELLOW}\$cert = Get-ChildItem Cert:\\LocalMachine\\Root | Where-Object {\$_.Subject -like '*CA*'}${NC}"
-        echo -e "      ${YELLOW}Export-Certificate -Cert \$cert -FilePath C:\\root-ca.cer -Type CERT${NC}"
-        echo ""
-        echo -e "   ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}The script will automatically retrieve the Root CA certificate${NC}"
+        echo -e "${BOLD}from Active Directory using your service account.${NC}"
         echo ""
 
-        read -p "   Do you want to paste the certificate now? (y/n) [y]: " -n 1 -r
-        echo ""
-        echo ""
-
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            echo -e "   ${YELLOW}Paste your certificate content below:${NC}"
-            echo -e "   ${CYAN}(Start with -----BEGIN CERTIFICATE-----)${NC}"
-            echo -e "   ${CYAN}(End with -----END CERTIFICATE-----)${NC}"
-            echo -e "   ${CYAN}(Press CTRL+D on a new line when finished)${NC}"
-            echo ""
-
-            CERT_CONTENT=$(cat)
-
-            # Validate it looks like a certificate
-            if [[ $CERT_CONTENT == *"BEGIN CERTIFICATE"* ]] && [[ $CERT_CONTENT == *"END CERTIFICATE"* ]]; then
-                print_success "   Certificate content received successfully"
-            else
-                print_warning "   Certificate format may be invalid. Continuing anyway..."
-            fi
-            echo ""
-        else
-            CERT_CONTENT=""
-            echo ""
-            print_info "   You'll need to add the certificate manually to ./certs/ad-root-ca.crt"
-            echo ""
-        fi
+        # Note: Certificate will be fetched after create_project when we're in the right directory
+        CERT_CONTENT="AUTO_FETCH"
     else
         LDAP_TLS_VERIFY="false"
         CERT_CONTENT=""
-        print_info "   Certificate verification disabled (recommended for development)"
+        print_info "   Certificate verification disabled"
+        print_warning "   This is NOT recommended for production environments"
         echo ""
     fi
 
@@ -529,14 +656,52 @@ show_configuration_summary() {
 }
 
 ################################################################################
+# Rollback Functions
+################################################################################
+
+restore_backup() {
+    if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+        print_warning "Installation failed - restoring backup..."
+        rm -rf "$INSTALL_DIR"
+        mv "$BACKUP_DIR" "$INSTALL_DIR"
+        print_info "Backup restored to $INSTALL_DIR"
+    fi
+}
+
+cleanup_on_error() {
+    print_error "Installation encountered an error"
+    if [ -d "$INSTALL_DIR" ] && [ ! -f "$INSTALL_DIR/.env" ]; then
+        # If .env doesn't exist, it's a failed new installation
+        print_step "Cleaning up failed installation..."
+        rm -rf "$INSTALL_DIR"
+        print_info "Cleanup complete"
+    fi
+}
+
+################################################################################
 # Installation
 ################################################################################
 
 create_project() {
     print_header "Creating Project"
 
+    # Check if directory exists and create backup
+    if [ -d "$INSTALL_DIR" ]; then
+        BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
+        print_step "Existing installation found - creating backup..."
+        mv "$INSTALL_DIR" "$BACKUP_DIR"
+        print_success "Backup created: $BACKUP_DIR"
+    fi
+
     print_step "Creating directory: $INSTALL_DIR"
     mkdir -p "$INSTALL_DIR"
+
+    # Secure directory permissions
+    chmod 700 "$INSTALL_DIR"
+
+    # Set trap for error handling
+    trap 'restore_backup' ERR
+
     cd "$INSTALL_DIR"
 
     # Create docker-compose.yml
@@ -579,8 +744,12 @@ EOF
     # Secure .env file
     chmod 600 .env
 
-    # Create certificate if provided
-    if [ -n "$CERT_CONTENT" ]; then
+    # Handle certificate
+    if [ "$CERT_CONTENT" = "AUTO_FETCH" ]; then
+        # Automatically fetch certificate from AD
+        auto_fetch_certificate
+    elif [ -n "$CERT_CONTENT" ]; then
+        # Manual certificate was provided
         print_step "Creating AD Root CA certificate..."
         mkdir -p ./certs
         echo "$CERT_CONTENT" > ./certs/ad-root-ca.crt
@@ -595,22 +764,22 @@ pull_and_start() {
     print_header "Starting AD Collector"
 
     print_step "Pulling Docker image from Docker Hub..."
-    docker compose pull
+    $DOCKER_COMPOSE_CMD pull
 
     print_step "Starting container..."
-    docker compose up -d
+    $DOCKER_COMPOSE_CMD up -d
 
     print_step "Waiting for container to be ready..."
     sleep 5
 
     # Check container status
-    if docker compose ps | grep -q "Up"; then
+    if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
         print_success "Container started successfully"
     else
         print_error "Container failed to start"
         echo ""
         echo "Logs:"
-        docker compose logs
+        $DOCKER_COMPOSE_CMD logs
         exit 1
     fi
 }
@@ -619,13 +788,72 @@ get_token() {
     print_step "Retrieving API token..."
 
     sleep 2
-    TOKEN=$(docker compose logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/ad-collector  | //' | xargs)
+    # More robust token extraction
+    TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+
+    if [ -z "$TOKEN" ]; then
+        # Fallback method
+        TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
+    fi
 
     if [ -z "$TOKEN" ]; then
         print_warning "Could not retrieve token automatically"
-        print_info "Run: docker compose logs | grep 'API Token'"
+        print_info "Run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
     else
         print_success "Token retrieved"
+    fi
+}
+
+################################################################################
+# Network Testing
+################################################################################
+
+test_network_connectivity() {
+    print_header "Network Connectivity Tests"
+
+    # Extract LDAP host and port
+    LDAP_HOST=$(echo "$LDAP_URL" | sed -E 's|ldaps?://([^:]+).*|\1|')
+    LDAP_PORT=$(echo "$LDAP_URL" | grep -oP ':\K[0-9]+$' || echo "636")
+
+    print_step "Testing connectivity to $LDAP_HOST:$LDAP_PORT..."
+
+    # Test 1: DNS resolution
+    if command -v nslookup &> /dev/null; then
+        if nslookup "$LDAP_HOST" &> /dev/null; then
+            print_success "DNS resolution successful"
+        else
+            print_warning "DNS resolution failed for $LDAP_HOST"
+        fi
+    fi
+
+    # Test 2: Port connectivity
+    if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$LDAP_HOST/$LDAP_PORT" 2>/dev/null; then
+        print_success "Port $LDAP_PORT is reachable on $LDAP_HOST"
+    else
+        print_error "Cannot reach $LDAP_HOST:$LDAP_PORT"
+        print_warning "Check firewall rules and network connectivity"
+        print_info "You may need to open port $LDAP_PORT in your firewall"
+
+        read -p "Continue anyway? (y/n): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+
+    # Test 3: Check local firewall for collector port
+    print_step "Checking if port $PORT is available..."
+    if command -v netstat &> /dev/null; then
+        if netstat -tuln 2>/dev/null | grep -q ":$PORT "; then
+            print_warning "Port $PORT is already in use"
+            read -p "Continue anyway? (y/n): " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            print_success "Port $PORT is available"
+        fi
     fi
 }
 
@@ -699,7 +927,7 @@ show_summary() {
     echo -e "${BOLD}╠════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BOLD}║ Service Information                                                    ║${NC}"
     echo -e "${BOLD}╠════════════════════════════════════════════════════════════════════════╣${NC}"
-    printf "║ %-30s %-41s ║\n" "Container Status:" "$(docker compose ps --format '{{.State}}' 2>/dev/null | head -1)"
+    printf "║ %-30s %-41s ║\n" "Container Status:" "$($DOCKER_COMPOSE_CMD ps --format '{{.State}}' 2>/dev/null | head -1)"
     printf "║ %-30s %-41s ║\n" "Health Status:" "$HEALTH_STATUS"
     printf "║ %-30s %-41s ║\n" "LDAP Connection:" "$LDAP_STATUS"
     printf "║ %-30s %-41s ║\n" "Network Status:" "$NETWORK_STATUS"
@@ -799,11 +1027,17 @@ reset_token() {
     fi
 
     print_step "Restarting container to generate new token..."
-    docker compose restart
+    $DOCKER_COMPOSE_CMD restart
 
     sleep 3
 
-    NEW_TOKEN=$(docker compose logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/ad-collector  | //' | xargs)
+    # More robust token extraction
+    NEW_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+
+    if [ -z "$NEW_TOKEN" ]; then
+        # Fallback
+        NEW_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
+    fi
 
     if [ -n "$NEW_TOKEN" ]; then
         echo ""
@@ -813,7 +1047,7 @@ reset_token() {
         echo ""
     else
         print_error "Could not retrieve new token"
-        print_info "Run: docker compose logs | grep 'API Token'"
+        print_info "Run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
     fi
 }
 
@@ -825,7 +1059,13 @@ show_token() {
 
     print_step "Retrieving current token..."
 
-    CURRENT_TOKEN=$(docker compose logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/ad-collector  | //' | xargs)
+    # More robust token extraction
+    CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+
+    if [ -z "$CURRENT_TOKEN" ]; then
+        # Fallback
+        CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
+    fi
 
     if [ -n "$CURRENT_TOKEN" ]; then
         echo ""
@@ -835,7 +1075,7 @@ show_token() {
         echo ""
     else
         print_error "Could not retrieve token"
-        print_info "Container may not be running. Start it with: docker compose up -d"
+        print_info "Container may not be running. Start it with: $DOCKER_COMPOSE_CMD up -d"
     fi
 }
 
@@ -847,7 +1087,7 @@ show_status() {
 
     print_header "AD Collector Status"
 
-    docker compose ps
+    $DOCKER_COMPOSE_CMD ps
 
     echo ""
     print_step "Health check..."
@@ -857,9 +1097,51 @@ show_status() {
 
     if echo "$HEALTH" | grep -q '"status":"ok"'; then
         print_success "Service is healthy"
-        echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
+        # Validate python3 is available
+        if command -v python3 &> /dev/null; then
+            echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
+        else
+            echo "$HEALTH"
+        fi
     else
         print_error "Service is not responding"
+    fi
+}
+
+update() {
+    print_header "Updating AD Collector"
+
+    if [ ! -f "docker-compose.yml" ]; then
+        print_error "Not in AD Collector directory"
+        print_info "cd to your installation directory first"
+        exit 1
+    fi
+
+    print_step "Creating backup of current configuration..."
+    cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
+    print_success "Configuration backed up"
+
+    print_step "Pulling latest Docker image..."
+    $DOCKER_COMPOSE_CMD pull
+
+    print_step "Restarting with new image..."
+    $DOCKER_COMPOSE_CMD up -d
+
+    print_step "Waiting for container to be ready..."
+    sleep 5
+
+    # Check if update was successful
+    if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
+        print_success "Update completed successfully"
+
+        # Show new version
+        NEW_VERSION=$(curl -s http://localhost:8443/health 2>/dev/null | grep -oP '"version":"[^"]+' | cut -d'"' -f4)
+        if [ -n "$NEW_VERSION" ]; then
+            print_info "Current version: $NEW_VERSION"
+        fi
+    else
+        print_error "Update failed - container not running"
+        print_info "Check logs: $DOCKER_COMPOSE_CMD logs"
     fi
 }
 
@@ -880,7 +1162,7 @@ uninstall() {
     fi
 
     print_step "Stopping and removing container..."
-    docker compose down
+    $DOCKER_COMPOSE_CMD down
 
     print_step "Removing Docker image..."
     docker rmi fuskerrs97/ad-collector-n8n:latest 2>/dev/null || true
@@ -911,6 +1193,7 @@ show_usage() {
     echo ""
     echo "Options:"
     echo "  (no option)        Run interactive installation"
+    echo "  --update           Update to latest version"
     echo "  --reset-token      Regenerate API token"
     echo "  --get-token        Display current API token"
     echo "  --status           Show collector status"
@@ -922,6 +1205,10 @@ show_usage() {
 main() {
     # Parse arguments
     case "${1:-}" in
+        --update)
+            update
+            exit 0
+            ;;
         --reset-token)
             reset_token
             exit 0
@@ -963,6 +1250,7 @@ main() {
     check_disk_space
     check_memory
     check_curl
+    check_ldap_utils
 
     if ! check_docker; then
         read -p "Docker is not installed. Install it now? (y/n): " -n 1 -r
@@ -975,9 +1263,16 @@ main() {
         fi
     fi
 
+    # Detect Docker Compose version
+    if ! detect_docker_compose; then
+        print_error "Docker Compose is required but could not be installed"
+        exit 1
+    fi
+
     show_prerequisites
     get_user_input
     show_configuration_summary
+    test_network_connectivity
     create_project
     pull_and_start
     get_token
