@@ -2,6 +2,20 @@ const express = require('express');
 const ldap = require('ldapjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+// Load CA certificate if it exists
+let caCert = null;
+const certPath = process.env.NODE_EXTRA_CA_CERTS || '/app/certs/ad-root-ca.crt';
+if (fs.existsSync(certPath)) {
+  try {
+    caCert = fs.readFileSync(certPath, 'utf8');
+    console.log(`✅ Loaded CA certificate from ${certPath}`);
+  } catch (err) {
+    console.warn(`⚠️  Failed to load CA certificate: ${err.message}`);
+  }
+}
 
 // Configuration from environment variables
 const config = {
@@ -12,7 +26,10 @@ const config = {
     bindDN: process.env.LDAP_BIND_DN || 'CN=admin,CN=Users,DC=example,DC=com',
     bindPassword: process.env.LDAP_BIND_PASSWORD || 'password',
     tlsOptions: {
-      rejectUnauthorized: process.env.LDAP_TLS_VERIFY === 'true'
+      rejectUnauthorized: process.env.LDAP_TLS_VERIFY === 'true',
+      ...(caCert && { ca: [caCert] }),  // Add CA certificate if loaded
+      // Allow connecting by IP when certificate is issued for hostname
+      checkServerIdentity: function() { return undefined; }
     }
   }
 };
