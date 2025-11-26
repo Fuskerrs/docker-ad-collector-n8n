@@ -716,6 +716,8 @@ services:
       - "$PORT:8443"
     env_file:
       - .env
+    volumes:
+      - ./certs:/app/certs:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8443/health"]
       interval: 30s
