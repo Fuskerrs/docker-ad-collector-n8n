@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.0.0');
+console.log('AD Collector for n8n - v1.1.1');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -228,9 +228,26 @@ async function getDnFromSam(samAccountName) {
   return user.objectName;
 }
 
+// Helper to convert Windows FileTime to JavaScript Date
+function fileTimeToDate(fileTime) {
+  if (!fileTime || fileTime === '0' || fileTime === '9223372036854775807') {
+    return null;
+  }
+  // Windows FileTime is 100-nanosecond intervals since 1601-01-01 UTC
+  const EPOCH_DIFF = 11644473600000; // milliseconds between 1601 and 1970
+  const timestamp = (parseInt(fileTime) / 10000) - EPOCH_DIFF;
+  return new Date(timestamp);
+}
+
+// Helper to format date as human-readable string
+function formatDate(date) {
+  if (!date) return null;
+  return date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+}
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.0.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.1.1' });
 });
 
 // Test LDAP connection
@@ -634,14 +651,41 @@ app.post('/api/users/check-password-expiry', authenticate, async (req, res) => {
 
     const willExpire = pwdLastSet && pwdLastSet !== '0';
 
+    // Convert Windows FileTime to JavaScript Date
+    const pwdLastSetDate = fileTimeToDate(pwdLastSet);
+    const accountExpiresDate = fileTimeToDate(accountExpires);
+
+    // Calculate password expiry date
+    let passwordExpiresDate = null;
+    let daysUntilExpiry = null;
+
+    if (willExpire && pwdLastSetDate) {
+      passwordExpiresDate = new Date(pwdLastSetDate);
+      passwordExpiresDate.setDate(passwordExpiresDate.getDate() + maxPwdAge);
+
+      // Calculate days until expiry
+      const now = new Date();
+      const timeDiff = passwordExpiresDate.getTime() - now.getTime();
+      daysUntilExpiry = Math.ceil(timeDiff / (1000 * 3600 * 24));
+    }
+
+    // Handle special value for "never expires"
+    const accountExpiresReadable = accountExpires === '9223372036854775807'
+      ? 'Never'
+      : formatDate(accountExpiresDate);
+
     res.json({
       success: true,
       samAccountName,
       pwdLastSet,
+      pwdLastSetDate: formatDate(pwdLastSetDate),
       accountExpires,
+      accountExpiresDate: accountExpiresReadable,
+      passwordExpiresDate: formatDate(passwordExpiresDate),
       maxPwdAge,
       willExpire,
-      expiryDays: willExpire ? maxPwdAge : null
+      expiryDays: willExpire ? maxPwdAge : null,
+      daysUntilExpiry
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
