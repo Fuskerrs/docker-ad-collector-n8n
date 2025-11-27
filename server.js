@@ -161,6 +161,11 @@ async function searchMany(filter, attributes = ['*'], maxResults = 1000) {
 
       search.on('error', (err) => {
         client.unbind();
+        // If we got "Size Limit Exceeded" but we have partial results, return them
+        if (err.name === 'SizeLimitExceededError' && results.length > 0) {
+          console.log(`Size limit exceeded, returning ${results.length} partial results`);
+          return resolve(results);
+        }
         reject(err);
       });
 
