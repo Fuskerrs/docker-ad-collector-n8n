@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.1.1');
+console.log('AD Collector for n8n - v1.1.2');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -247,7 +247,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.1.1' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.1.2' });
 });
 
 // Test LDAP connection
@@ -583,6 +583,39 @@ app.post('/api/users/reset-password', authenticate, async (req, res) => {
           return res.status(500).json({ success: false, error: err.message });
         }
         res.json({ success: true, dn: userDn, passwordReset: true });
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete user
+app.post('/api/users/delete', authenticate, async (req, res) => {
+  try {
+    const { dn, samAccountName } = req.body;
+
+    let userDn = dn;
+    if (!userDn && samAccountName) {
+      userDn = await getDnFromSam(samAccountName);
+    }
+
+    if (!userDn) {
+      return res.status(400).json({
+        success: false,
+        error: 'Either dn or samAccountName is required'
+      });
+    }
+
+    const client = await createLdapClient();
+
+    return new Promise((resolve, reject) => {
+      client.del(userDn, (err) => {
+        client.unbind();
+        if (err) {
+          return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, dn: userDn, deleted: true });
       });
     });
   } catch (error) {

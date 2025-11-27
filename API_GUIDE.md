@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.1.1
+## Version: 1.1.2
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -321,6 +321,34 @@ Réinitialise le mot de passe d'un utilisateur.
   "success": true,
   "dn": "CN=John Doe,OU=Users,DC=example,DC=com",
   "passwordReset": true
+}
+```
+
+---
+
+### POST /api/users/delete
+
+Supprime un utilisateur.
+
+**Body :**
+```json
+{
+  "samAccountName": "john.doe"
+}
+```
+OU
+```json
+{
+  "dn": "CN=John Doe,OU=Users,DC=example,DC=com"
+}
+```
+
+**Réponse :**
+```json
+{
+  "success": true,
+  "dn": "CN=John Doe,OU=Users,DC=example,DC=com",
+  "deleted": true
 }
 ```
 
