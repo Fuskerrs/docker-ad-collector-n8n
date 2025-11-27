@@ -135,45 +135,80 @@ async function searchOne(filter, attributes = ['*']) {
   });
 }
 
-// Helper to search for multiple entries
+// Helper to search for multiple entries with pagination
 async function searchMany(filter, attributes = ['*'], maxResults = 1000) {
   const client = await createLdapClient();
+  const pageSize = 100; // Fetch results in pages of 100
+  const results = [];
 
-  return new Promise((resolve, reject) => {
-    const opts = {
-      filter: filter,
-      scope: 'sub',
-      attributes: attributes,
-      sizeLimit: maxResults
-    };
+  return new Promise(async (resolve, reject) => {
+    try {
+      let cookie = null;
+      let hasMorePages = true;
 
-    const results = [];
+      while (hasMorePages && results.length < maxResults) {
+        const opts = {
+          filter: filter,
+          scope: 'sub',
+          attributes: attributes,
+          paged: {
+            pageSize: Math.min(pageSize, maxResults - results.length),
+            pagePause: false
+          }
+        };
 
-    client.search(config.ldap.baseDN, opts, (err, search) => {
-      if (err) {
-        client.unbind();
-        return reject(err);
+        // Add cookie for subsequent pages
+        if (cookie) {
+          opts.paged.cookie = cookie;
+        }
+
+        await new Promise((pageResolve, pageReject) => {
+          client.search(config.ldap.baseDN, opts, (err, search) => {
+            if (err) {
+              return pageReject(err);
+            }
+
+            search.on('searchEntry', (entry) => {
+              if (results.length < maxResults) {
+                results.push(entry.pojo);
+              }
+            });
+
+            search.on('page', (result, cb) => {
+              cookie = result.cookie;
+              if (!cookie || results.length >= maxResults) {
+                hasMorePages = false;
+              }
+              if (cb) cb();
+            });
+
+            search.on('error', (err) => {
+              // If we got "Size Limit Exceeded" but we have partial results, return them
+              if (err.name === 'SizeLimitExceededError' && results.length > 0) {
+                console.log(`Size limit exceeded during pagination, returning ${results.length} partial results`);
+                hasMorePages = false;
+                return pageResolve();
+              }
+              pageReject(err);
+            });
+
+            search.on('end', (result) => {
+              if (!result || !result.cookie) {
+                hasMorePages = false;
+              }
+              pageResolve();
+            });
+          });
+        });
       }
 
-      search.on('searchEntry', (entry) => {
-        results.push(entry.pojo);
-      });
-
-      search.on('error', (err) => {
-        client.unbind();
-        // If we got "Size Limit Exceeded" but we have partial results, return them
-        if (err.name === 'SizeLimitExceededError' && results.length > 0) {
-          console.log(`Size limit exceeded, returning ${results.length} partial results`);
-          return resolve(results);
-        }
-        reject(err);
-      });
-
-      search.on('end', () => {
-        client.unbind();
-        resolve(results);
-      });
-    });
+      client.unbind();
+      console.log(`Pagination complete: retrieved ${results.length} results`);
+      resolve(results);
+    } catch (error) {
+      client.unbind();
+      reject(error);
+    }
   });
 }
 
