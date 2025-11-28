@@ -1398,10 +1398,23 @@ app.post('/api/audit', authenticate, async (req, res) => {
     };
 
     // Calculate security score (100 = perfect, 0 = terrible)
-    const maxRiskPoints = allUsers.length * 5; // Theoretical maximum risk
-    const actualRiskPoints = (findings.critical.length * 10) + (findings.high.length * 5) +
-                              (findings.medium.length * 2) + (findings.low.length * 1);
-    riskScore.score = Math.max(0, Math.min(100, 100 - Math.floor((actualRiskPoints / maxRiskPoints) * 100)));
+    // HYBRID APPROACH: Combines weighted points + direct penalties
+
+    // 1. Weighted risk points (heavier weights than before)
+    const weightedRiskPoints = (findings.critical.length * 15) + (findings.high.length * 8) +
+                                (findings.medium.length * 2) + (findings.low.length * 1);
+
+    // 2. Max risk with stricter denominator (2.5 instead of 5)
+    const maxRiskPoints = allUsers.length * 2.5;
+
+    // 3. Percentage-based deduction
+    const percentageDeduction = Math.floor((weightedRiskPoints / maxRiskPoints) * 100);
+
+    // 4. Direct penalty per finding (flat deduction)
+    const directPenalty = Math.floor((findings.critical.length * 0.3) + (findings.high.length * 0.1));
+
+    // 5. Final score: base 100 - percentage deduction - direct penalty
+    riskScore.score = Math.max(0, Math.min(100, 100 - percentageDeduction - directPenalty));
 
     trackStep('STEP_14_RISK_SCORING', 'Risk scoring calculation', {
       count: riskScore.total,

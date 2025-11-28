@@ -740,21 +740,49 @@ The audit executes in 15 logical steps, each with a specific code:
 
 ---
 
-### Risk Scoring Algorithm
+### Risk Scoring Algorithm (Hybrid Approach)
 
-The security score ranges from 0 (very bad) to 100 (perfect):
+The security score ranges from 0 (very bad) to 100 (perfect) using a hybrid scoring system that combines weighted risk points with direct penalties.
 
-**Risk Points Calculation:**
-- Critical finding: 10 points
-- High finding: 5 points
+**Weighted Risk Points:**
+- Critical finding: 15 points (increased from 10)
+- High finding: 8 points (increased from 5)
 - Medium finding: 2 points
 - Low finding: 1 point
 
-**Score Formula:**
+**Hybrid Score Formula:**
 ```
-maxRiskPoints = totalUsers × 5
-actualRiskPoints = (critical × 10) + (high × 5) + (medium × 2) + (low × 1)
-score = 100 - min(100, (actualRiskPoints / maxRiskPoints) × 100)
+Step 1: Calculate weighted risk points
+weightedRiskPoints = (critical × 15) + (high × 8) + (medium × 2) + (low × 1)
+
+Step 2: Calculate max risk (stricter denominator)
+maxRiskPoints = totalUsers × 2.5 (reduced from 5.0 for stricter scoring)
+
+Step 3: Calculate percentage-based deduction
+percentageDeduction = floor((weightedRiskPoints / maxRiskPoints) × 100)
+
+Step 4: Calculate direct penalty (flat deduction)
+directPenalty = floor((critical × 0.3) + (high × 0.1))
+
+Step 5: Final score
+score = max(0, min(100, 100 - percentageDeduction - directPenalty))
+```
+
+**Why Hybrid Scoring?**
+The hybrid approach punishes critical vulnerabilities more severely than the previous formula:
+- **Heavier weights**: Critical findings count for 50% more (15 vs 10 points)
+- **Stricter denominator**: Maximum risk reduced by 50% (2.5x vs 5x users)
+- **Direct penalties**: Each critical finding directly removes 0.3 points from score
+- **More realistic**: With 56 critical findings, score drops to ~76 instead of 99
+
+**Example Calculation:**
+For an audit with 7426 users, 56 critical, 25 high findings:
+```
+weightedRiskPoints = (56 × 15) + (25 × 8) = 840 + 200 = 1040
+maxRiskPoints = 7426 × 2.5 = 18,565
+percentageDeduction = floor((1040 / 18,565) × 100) = 5
+directPenalty = floor((56 × 0.3) + (25 × 0.1)) = floor(16.8 + 2.5) = 19
+score = 100 - 5 - 19 = 76
 ```
 
 **Score Interpretation:**

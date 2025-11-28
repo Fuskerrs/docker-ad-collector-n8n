@@ -13,71 +13,72 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 [![Docker Image Size](https://img.shields.io/docker/image-size/fuskerrs97/ad-collector-n8n/latest)](https://hub.docker.com/r/fuskerrs97/ad-collector-n8n)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-### ☕ Support this project
+###  Support this project
 
 <a href="https://buymeacoffee.com/freelancerc5" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-*If you find this collector useful, consider buying me a coffee! Your support helps maintain and improve this project.* 🚀
+*If you find this collector useful, consider buying me a coffee! Your support helps maintain and improve this project.* 
 
 </div>
 
 ---
 
-## 🎯 What is AD Collector?
+##  What is AD Collector?
 
 **AD Collector** is a **lightweight REST API server** that acts as a secure bridge between [n8n](https://n8n.io) and your Active Directory infrastructure. It enables the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node to perform powerful AD operations in **Collector Mode**.
 
-### 🤔 Why Use Collector Mode?
+###  Why Use Collector Mode?
 
 | **Direct Mode** | **Collector Mode** ⭐ |
 |-----------------|---------------------|
-| ❌ Requires opening LDAP ports (389/636) to n8n | ✅ Only needs HTTP/HTTPS (8443) access |
-| ❌ Complex network configuration | ✅ Simple Docker deployment |
-| ❌ Certificate management per workflow | ✅ Centralized certificate handling |
-| ❌ Multiple LDAP connections | ✅ Connection pooling and optimization |
-| ⚠️ Limited connection control | ✅ Rate limiting and monitoring |
+|  Requires opening LDAP ports (389/636) to n8n |  Only needs HTTP/HTTPS (8443) access |
+|  Complex network configuration |  Simple Docker deployment |
+|  Certificate management per workflow |  Centralized certificate handling |
+|  Multiple LDAP connections |  Connection pooling and optimization |
+|  Limited connection control |  Rate limiting and monitoring |
 
 **Perfect for:**
-- 🏢 Enterprise environments with strict network policies
-- 🔒 Security-conscious organizations
-- ☁️ Cloud-hosted n8n instances
-- 🚀 High-performance AD automation at scale
+-  Enterprise environments with strict network policies
+-  Security-conscious organizations
+-  Cloud-hosted n8n instances
+-  High-performance AD automation at scale
 
 ---
 
-## ✨ Features
+##  Features
 
-### 🔐 Security First
-- ✅ **Full LDAPS Support** - Encrypted LDAP connections (port 636)
-- ✅ **JWT Authentication** - Secure API access with bearer tokens
-- ✅ **Self-Signed Certificates** - Built-in support for internal PKI
-- ✅ **Environment-Based Config** - No hardcoded credentials
-- ✅ **Non-Root Container** - Runs with minimal privileges
+###  Security First
+-  **Full LDAPS Support** - Encrypted LDAP connections (port 636)
+-  **JWT Authentication** - Secure API access with bearer tokens
+-  **Self-Signed Certificates** - Built-in support for internal PKI
+-  **Environment-Based Config** - No hardcoded credentials
+-  **Non-Root Container** - Runs with minimal privileges
 
-### ⚡ Performance & Reliability
-- ✅ **Lightweight** - Only 138 MB Alpine-based Docker image
-- ✅ **Health Checks** - Built-in monitoring and auto-recovery
-- ✅ **Connection Pooling** - Efficient LDAP connection management
-- ✅ **Auto-Restart** - Resilient to network interruptions
-- ✅ **Comprehensive Logging** - Detailed error tracking
+###  Performance & Reliability
+-  **Lightweight** - Only 138 MB Alpine-based Docker image
+-  **Health Checks** - Built-in monitoring and auto-recovery
+-  **Connection Pooling** - Efficient LDAP connection management
+-  **Auto-Restart** - Resilient to network interruptions
+-  **Comprehensive Logging** - Detailed error tracking
 
-### 🎯 Complete AD Operations
-- 👥 **User Management** - Create, modify, enable/disable, password reset
-- 👬 **Group Management** - Create, modify, add/remove members
-- 🗂️ **OU Management** - Create, modify, list organizational units
-- 🔍 **Advanced Search** - Filter and find users, groups, OUs
-- 📊 **Activity Tracking** - Login times, password expiry, account status
+###  Complete AD Operations
+-  **User Management** - Create, modify, enable/disable, password reset
+-  **Group Management** - Create, modify, add/remove members
+-  **OU Management** - Create, modify, list organizational units
+-  **Advanced Search** - Filter and find users, groups, OUs
+-  **Activity Tracking** - Login times, password expiry, account status
+-  **Security Audit** - Enterprise-grade AD security audit with 15-step progressive tracking, risk scoring (0-100), Kerberos security analysis, password security, privileged accounts detection, findings by severity
 
-### 🛠️ Developer Friendly
-- ✅ **26 REST API Endpoints** - Full CRUD operations
-- ✅ **Docker Compose Ready** - One-command deployment
-- ✅ **Comprehensive Documentation** - Setup guides, troubleshooting, best practices
-- ✅ **Environment Variables** - Flexible configuration
-- ✅ **Open Source** - MIT License, contributions welcome
+###  Developer Friendly
+-  **27 REST API Endpoints** - Full CRUD operations
+-  **Docker Compose Ready** - One-command deployment
+-  **Comprehensive Documentation** - Setup guides, troubleshooting, best practices
+-  **Environment Variables** - Flexible configuration
+-  **Open Source** - MIT License, contributions welcome
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -90,13 +91,13 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ---
 
-## 📦 Installation Methods
+##  Installation Methods
 
 ### Method 1: Automated Installation Script ⭐ **RECOMMENDED**
 
 The easiest way to install AD Collector with automatic dependency checks, Docker installation, and interactive configuration.
 
-**⚠️ Note:** This script requires an **interactive terminal** and cannot be run via `curl | bash`. Use the download method below.
+** Note:** This script requires an **interactive terminal** and cannot be run via `curl | bash`. Use the download method below.
 
 #### Installation Steps
 
@@ -113,13 +114,13 @@ chmod +x install.sh
 
 #### What the Script Does
 
-✅ **Automatically detects your OS** (CentOS, AlmaLinux, RHEL, Ubuntu, Debian, Fedora)
-✅ **Checks system requirements** (disk space, memory)
-✅ **Installs Docker** if not present
-✅ **Interactive configuration** with validation
-✅ **Tests LDAP connection** before finishing
-✅ **Displays beautiful summary table** with all connection info
-✅ **Saves API token** for easy retrieval
+ **Automatically detects your OS** (CentOS, AlmaLinux, RHEL, Ubuntu, Debian, Fedora)
+ **Checks system requirements** (disk space, memory)
+ **Installs Docker** if not present
+ **Interactive configuration** with validation
+ **Tests LDAP connection** before finishing
+ **Displays beautiful summary table** with all connection info
+ **Saves API token** for easy retrieval
 
 #### Script Options
 
@@ -132,7 +133,7 @@ chmod +x install.sh
 ./install.sh --help         # Show help
 ```
 
-📖 **[Full Installation Script Documentation](INSTALL.md)**
+ **[Full Installation Script Documentation](INSTALL.md)**
 
 ---
 
@@ -209,7 +210,7 @@ docker-compose logs | grep "API Token"
 
 ---
 
-## 🔗 Connecting to n8n
+##  Connecting to n8n
 
 Once your AD Collector is running, configure it in n8n:
 
@@ -222,7 +223,7 @@ If you haven't already, install the **n8n-nodes-ad-admin** community node:
 3. Enter: `n8n-nodes-ad-admin`
 4. Click **Install**
 
-📖 **Full n8n node documentation:** https://github.com/Fuskerrs/n8n-nodes-ad-admin
+ **Full n8n node documentation:** https://github.com/Fuskerrs/n8n-nodes-ad-admin
 
 ### Step 2: Create Collector Credentials
 
@@ -235,9 +236,9 @@ If you haven't already, install the **n8n-nodes-ad-admin** community node:
 | **Connection Mode** | **Collector** | Select Collector mode |
 | **Collector URL** | `http://ad-collector:8443` | Use container name if on same Docker network<br>OR `http://your-server-ip:8443` for external |
 | **API Token** | *paste token from logs* | The token displayed when container starts |
-| **Skip SSL Verification** | ✅ **Checked** | Check this box |
+| **Skip SSL Verification** |  **Checked** | Check this box |
 
-4. Click **Test Connection** → Should show ✅ **Connected successfully**
+4. Click **Test Connection** → Should show  **Connected successfully**
 5. Click **Save**
 
 ### Step 3: Use in Workflows
@@ -255,7 +256,7 @@ Add an **Active Directory Admin** node to your workflow and start automating!
 
 ---
 
-## 📚 Full Documentation
+##  Full Documentation
 
 - **[Complete Setup Guide](SETUP.md)** - Detailed installation, configuration, and troubleshooting
 - **[API Reference](#api-endpoints)** - All 26 available endpoints
@@ -263,7 +264,7 @@ Add an **Active Directory Admin** node to your workflow and start automating!
 
 ---
 
-## 🔧 API Endpoints
+##  API Endpoints
 
 The AD Collector provides 26 REST API endpoints:
 
@@ -307,29 +308,29 @@ The AD Collector provides 26 REST API endpoints:
 
 ---
 
-## 🔒 Security Best Practices
+##  Security Best Practices
 
 ### Network Security
-✅ Run on internal network only
-✅ Use Docker networks for n8n ↔ Collector
-✅ Firewall port 8443
-❌ Never expose directly to internet
+ Run on internal network only
+ Use Docker networks for n8n ↔ Collector
+ Firewall port 8443
+ Never expose directly to internet
 
 ### Credentials
-✅ Use dedicated service account
-✅ Minimal required permissions
-✅ Rotate passwords regularly
-✅ `.env` file permissions: `chmod 600`
-❌ Never use Domain Admin
+ Use dedicated service account
+ Minimal required permissions
+ Rotate passwords regularly
+ `.env` file permissions: `chmod 600`
+ Never use Domain Admin
 
 ### SSL/TLS
-✅ Always use LDAPS (port 636) in production
-✅ Valid SSL certificates when possible
-❌ Don't skip certificate verification in production
+ Always use LDAPS (port 636) in production
+ Valid SSL certificates when possible
+ Don't skip certificate verification in production
 
 ---
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Quick Tests
 
@@ -369,7 +370,7 @@ See [SETUP.md](SETUP.md) for comprehensive troubleshooting guide.
 
 ---
 
-## 📊 Technical Details
+##  Technical Details
 
 - **Runtime:** Node.js 18 (Alpine Linux)
 - **Size:** 138 MB (optimized)
@@ -379,7 +380,7 @@ See [SETUP.md](SETUP.md) for comprehensive troubleshooting guide.
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions welcome! Please:
 
@@ -393,7 +394,7 @@ Contributions welcome! Please:
 
 ---
 
-## 📄 License
+##  License
 
 MIT License - Copyright (c) 2025
 
@@ -401,7 +402,7 @@ See [LICENSE](LICENSE) file for full details.
 
 ---
 
-## 🔗 Related Projects
+##  Related Projects
 
 - **[n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin)** - The n8n community node (required)
 - **[n8n](https://n8n.io)** - Workflow automation platform
@@ -409,12 +410,12 @@ See [LICENSE](LICENSE) file for full details.
 
 ---
 
-## 💬 Support
+##  Support
 
-- 📖 **Documentation:** [SETUP.md](SETUP.md)
-- 🐛 **Bug Reports:** [GitHub Issues](https://github.com/Fuskerrs/docker-ad-collector-n8n/issues)
-- 💬 **Discussions:** [GitHub Discussions](https://github.com/Fuskerrs/docker-ad-collector-n8n/discussions)
-- 🌐 **n8n Community:** [community.n8n.io](https://community.n8n.io)
+-  **Documentation:** [SETUP.md](SETUP.md)
+-  **Bug Reports:** [GitHub Issues](https://github.com/Fuskerrs/docker-ad-collector-n8n/issues)
+-  **Discussions:** [GitHub Discussions](https://github.com/Fuskerrs/docker-ad-collector-n8n/discussions)
+-  **n8n Community:** [community.n8n.io](https://community.n8n.io)
 
 ### Show Your Support
 
@@ -424,15 +425,15 @@ See [LICENSE](LICENSE) file for full details.
 
 **Other ways to support:**
 - ⭐ Star on [GitHub](https://github.com/Fuskerrs/docker-ad-collector-n8n)
-- 🐳 Rate on [Docker Hub](https://hub.docker.com/r/fuskerrs97/ad-collector-n8n)
-- 🐦 Share on social media
-- 🤝 Contribute code or docs
+-  Rate on [Docker Hub](https://hub.docker.com/r/fuskerrs97/ad-collector-n8n)
+-  Share on social media
+-  Contribute code or docs
 
 ---
 
 <div align="center">
 
-**Made with ❤️ for the n8n community**
+**Made with  for the n8n community**
 
 *Active Directory automation made simple*
 
