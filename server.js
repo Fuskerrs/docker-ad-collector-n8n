@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.5.0');
+console.log('AD Collector for n8n - v1.6.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -247,7 +247,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.5.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.6.0' });
 });
 
 // Test LDAP connection
@@ -1076,6 +1076,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       serverOperators: [],
       printOperators: [],
       remoteDesktopUsers: [],
+      gpCreatorOwners: [],
+      dnsAdmins: [],
       adminCount: [],
       protectedUsers: []
     };
@@ -1091,6 +1093,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       'Server Operators': 'serverOperators',
       'Print Operators': 'printOperators',
       'Remote Desktop Users': 'remoteDesktopUsers',
+      'Group Policy Creator Owners': 'gpCreatorOwners',
+      'DnsAdmins': 'dnsAdmins',
       'Protected Users': 'protectedUsers'
     };
 
@@ -1178,7 +1182,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
       dcsyncCapable: [],
       protectedUsersBypass: [],
       weakEncryption: [],
-      sensitiveDelegation: []
+      sensitiveDelegation: [],
+      gpoModifyRights: [],
+      dnsAdmins: [],
+      delegationPrivilege: [],
+      replicationRights: []
     };
 
     const pwdPatterns = /(password|passwd|pwd|motdepasse|mdp)[:=]\s*[\w!@#$%^&*()]+/i;
@@ -1305,6 +1313,45 @@ app.post('/api/audit', authenticate, async (req, res) => {
         advancedSecurity.protectedUsersBypass.push(account);
         findings.medium.push({ type: 'NOT_IN_PROTECTED_USERS', dn: account.dn });
       }
+    }
+
+    // GPO Modify Rights (Group Policy Creator Owners members)
+    for (const member of privilegedAccounts.gpCreatorOwners) {
+      advancedSecurity.gpoModifyRights.push(member);
+      findings.high.push({ type: 'GPO_MODIFY_RIGHTS', dn: member.dn });
+    }
+
+    // DnsAdmins members (can execute code on DC via DLL loading)
+    for (const member of privilegedAccounts.dnsAdmins) {
+      advancedSecurity.dnsAdmins.push(member);
+      findings.high.push({ type: 'DNS_ADMINS_MEMBER', dn: member.dn });
+    }
+
+    // Detect accounts with replication rights (potential DCSync without being in DA/EA)
+    // These are accounts with adminCount=1 but NOT in standard admin groups
+    const standardAdminDns = [
+      ...privilegedAccounts.domainAdmins.map(a => a.dn),
+      ...privilegedAccounts.enterpriseAdmins.map(a => a.dn),
+      ...privilegedAccounts.administrators.map(a => a.dn)
+    ];
+
+    for (const account of privilegedAccounts.adminCount) {
+      if (!standardAdminDns.includes(account.dn)) {
+        advancedSecurity.replicationRights.push(account);
+        findings.high.push({ type: 'REPLICATION_RIGHTS', dn: account.dn });
+      }
+    }
+
+    // Detect accounts with delegation privilege
+    // Accounts in specific privileged groups that can modify delegation settings
+    const delegationGroups = [
+      ...privilegedAccounts.accountOperators,
+      ...privilegedAccounts.serverOperators
+    ];
+
+    for (const account of delegationGroups) {
+      advancedSecurity.delegationPrivilege.push(account);
+      findings.medium.push({ type: 'DELEGATION_PRIVILEGE', dn: account.dn });
     }
 
     trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
@@ -1593,6 +1640,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
           serverOperators: includeDetails ? privilegedAccounts.serverOperators : privilegedAccounts.serverOperators.length,
           printOperators: includeDetails ? privilegedAccounts.printOperators : privilegedAccounts.printOperators.length,
           remoteDesktopUsers: includeDetails ? privilegedAccounts.remoteDesktopUsers : privilegedAccounts.remoteDesktopUsers.length,
+          gpCreatorOwners: includeDetails ? privilegedAccounts.gpCreatorOwners : privilegedAccounts.gpCreatorOwners.length,
+          dnsAdmins: includeDetails ? privilegedAccounts.dnsAdmins : privilegedAccounts.dnsAdmins.length,
           adminCount: includeDetails ? privilegedAccounts.adminCount : privilegedAccounts.adminCount.length,
           protectedUsers: includeDetails ? privilegedAccounts.protectedUsers : privilegedAccounts.protectedUsers.length
         },
@@ -1614,7 +1663,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
           dcsyncCapable: includeDetails ? advancedSecurity.dcsyncCapable : advancedSecurity.dcsyncCapable.length,
           protectedUsersBypass: includeDetails ? advancedSecurity.protectedUsersBypass : advancedSecurity.protectedUsersBypass.length,
           weakEncryption: includeDetails ? advancedSecurity.weakEncryption : advancedSecurity.weakEncryption.length,
-          sensitiveDelegation: includeDetails ? advancedSecurity.sensitiveDelegation : advancedSecurity.sensitiveDelegation.length
+          sensitiveDelegation: includeDetails ? advancedSecurity.sensitiveDelegation : advancedSecurity.sensitiveDelegation.length,
+          gpoModifyRights: includeDetails ? advancedSecurity.gpoModifyRights : advancedSecurity.gpoModifyRights.length,
+          dnsAdmins: includeDetails ? advancedSecurity.dnsAdmins : advancedSecurity.dnsAdmins.length,
+          delegationPrivilege: includeDetails ? advancedSecurity.delegationPrivilege : advancedSecurity.delegationPrivilege.length,
+          replicationRights: includeDetails ? advancedSecurity.replicationRights : advancedSecurity.replicationRights.length
         },
         temporalAnalysis: {
           created7days: includeDetails ? temporalAnalysis.created7days : temporalAnalysis.created7days.length,

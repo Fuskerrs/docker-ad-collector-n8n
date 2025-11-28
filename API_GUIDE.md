@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.5.0
+## Version: 1.6.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -665,6 +665,8 @@ The audit executes in 15 logical steps, each with a specific code:
       "serverOperators": 0,
       "printOperators": 0,
       "remoteDesktopUsers": 3,
+      "gpCreatorOwners": 1,
+      "dnsAdmins": 4,
       "adminCount": 15,
       "protectedUsers": 8
     },
@@ -686,7 +688,11 @@ The audit executes in 15 logical steps, each with a specific code:
       "dcsyncCapable": 20,
       "protectedUsersBypass": 15,
       "weakEncryption": 0,
-      "sensitiveDelegation": 0
+      "sensitiveDelegation": 0,
+      "gpoModifyRights": 1,
+      "dnsAdmins": 4,
+      "delegationPrivilege": 9,
+      "replicationRights": 46
     },
     "temporalAnalysis": {
       "createdLast7Days": 2,
@@ -734,6 +740,9 @@ The audit executes in 15 logical steps, each with a specific code:
 - `SID_HISTORY` - SID History attribute populated (privilege escalation risk)
 - `WEAK_ENCRYPTION_DES` - Account configured for DES-only Kerberos encryption
 - `OVERSIZED_GROUP_HIGH` - Group with >500 members (management difficulty)
+- `GPO_MODIFY_RIGHTS` - Member of Group Policy Creator Owners (can modify GPOs)
+- `DNS_ADMINS_MEMBER` - Member of DnsAdmins (can execute code on DC via DLL)
+- `REPLICATION_RIGHTS` - AdminCount=1 account outside standard admin groups (potential DCSync)
 
 **Medium Findings:**
 - `PASSWORD_VERY_OLD` - Password older than 1 year
@@ -743,6 +752,7 @@ The audit executes in 15 logical steps, each with a specific code:
 - `NOT_IN_PROTECTED_USERS` - Privileged account not in Protected Users group
 - `WEAK_ENCRYPTION_FLAG` - Account with USE_DES_KEY_ONLY flag set
 - `OVERSIZED_GROUP` - Group with >100 members
+- `DELEGATION_PRIVILEGE` - Member of Account/Server Operators (can modify delegation settings)
 
 **Low Findings:**
 - `INACTIVE_90_DAYS` - Account inactive for 90+ days
@@ -839,7 +849,7 @@ score = 100 - 5 - 19 = 76
 - Inactive 180 days
 - Inactive 365 days
 
-**4. Privileged Accounts (11 groups):**
+**4. Privileged Accounts (13 groups):**
 - Domain Admins
 - Enterprise Admins
 - Schema Admins
@@ -849,6 +859,8 @@ score = 100 - 5 - 19 = 76
 - Server Operators
 - Print Operators
 - Remote Desktop Users
+- Group Policy Creator Owners
+- DnsAdmins
 - AdminCount=1
 - Protected Users group
 
@@ -865,12 +877,16 @@ score = 100 - 5 - 19 = 76
 - UnixUserPassword attribute set (plaintext password risk)
 - SID History populated (privilege escalation vector)
 
-**7. Advanced Security (5 enterprise checks):**
+**7. Advanced Security (9 enterprise checks):**
 - LAPS passwords readable (ms-Mcs-AdmPwd attribute)
 - DCSync capable accounts (DA/EA/Administrators membership)
 - Protected Users bypass (privileged accounts NOT in Protected Users)
 - Weak Kerberos encryption (DES-only or USE_DES_KEY_ONLY flag)
 - Sensitive delegation (adminCount=1 + unconstrained delegation)
+- GPO modify rights (Group Policy Creator Owners membership)
+- DnsAdmins members (can execute code on DC via DLL loading)
+- Delegation privilege (Account/Server Operators membership)
+- Replication rights (adminCount=1 outside standard admin groups)
 
 **8. Temporal Analysis (5 time periods):**
 - Created in last 7 days
