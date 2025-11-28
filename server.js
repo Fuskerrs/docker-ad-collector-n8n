@@ -1075,6 +1075,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       backupOperators: [],
       serverOperators: [],
       printOperators: [],
+      remoteDesktopUsers: [],
       adminCount: [],
       protectedUsers: []
     };
@@ -1089,6 +1090,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       'Backup Operators': 'backupOperators',
       'Server Operators': 'serverOperators',
       'Print Operators': 'printOperators',
+      'Remote Desktop Users': 'remoteDesktopUsers',
       'Protected Users': 'protectedUsers'
     };
 
@@ -1166,10 +1168,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
       passwordInDescription: [],
       testAccounts: [],
       sharedAccounts: [],
-      defaultAccounts: []
+      defaultAccounts: [],
+      unixUserPassword: [],
+      sidHistory: []
     };
 
-    const pwdPatterns = /(password|passwd|pwd|motdepasse|mdp|pass)[:=\s]/i;
+    const pwdPatterns = /(password|passwd|pwd|motdepasse|mdp)[:=]\s*[\w!@#$%^&*()]+/i;
     const testPatterns = /^(test|demo|temp|sample|example)/i;
     const sharedPatterns = /^(shared|common|generic|team)/i;
     const defaultNames = ['Administrator', 'Guest', 'krbtgt'];
@@ -1201,6 +1205,20 @@ app.post('/api/audit', authenticate, async (req, res) => {
       // Default accounts
       if (defaultNames.includes(sam)) {
         dangerousPatterns.defaultAccounts.push({ sam, dn });
+      }
+
+      // UnixUserPassword attribute (dangerous - stores Unix passwords)
+      const unixUserPassword = user.attributes.find(a => a.type === 'unixUserPassword')?.values[0];
+      if (unixUserPassword) {
+        dangerousPatterns.unixUserPassword.push({ sam, dn });
+        findings.critical.push({ type: 'UNIX_USER_PASSWORD', sam, dn });
+      }
+
+      // SID History (potential privilege escalation)
+      const sidHistory = user.attributes.find(a => a.type === 'sIDHistory')?.values || [];
+      if (sidHistory.length > 0) {
+        dangerousPatterns.sidHistory.push({ sam, dn, sidCount: sidHistory.length });
+        findings.high.push({ type: 'SID_HISTORY', sam, sidCount: sidHistory.length });
       }
     }
 
@@ -1290,12 +1308,16 @@ app.post('/api/audit', authenticate, async (req, res) => {
         groupAnalysis.emptyGroups.push({ sam, dn });
       }
 
-      // Oversized groups (>500 members = high, >1000 = critical)
+      // Oversized groups (>100 members = info, >500 = high, >1000 = critical)
       if (members.length > 1000) {
         groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
         findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, memberCount: members.length });
       } else if (members.length > 500) {
         groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, memberCount: members.length });
+      } else if (members.length > 100) {
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', sam, memberCount: members.length });
       }
 
       // Recently modified (7 days)
@@ -1485,6 +1507,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
           backupOperators: includeDetails ? privilegedAccounts.backupOperators : privilegedAccounts.backupOperators.length,
           serverOperators: includeDetails ? privilegedAccounts.serverOperators : privilegedAccounts.serverOperators.length,
           printOperators: includeDetails ? privilegedAccounts.printOperators : privilegedAccounts.printOperators.length,
+          remoteDesktopUsers: includeDetails ? privilegedAccounts.remoteDesktopUsers : privilegedAccounts.remoteDesktopUsers.length,
           adminCount: includeDetails ? privilegedAccounts.adminCount : privilegedAccounts.adminCount.length,
           protectedUsers: includeDetails ? privilegedAccounts.protectedUsers : privilegedAccounts.protectedUsers.length
         },
@@ -1497,7 +1520,9 @@ app.post('/api/audit', authenticate, async (req, res) => {
           passwordInDescription: includeDetails ? dangerousPatterns.passwordInDescription : dangerousPatterns.passwordInDescription.length,
           testAccounts: includeDetails ? dangerousPatterns.testAccounts : dangerousPatterns.testAccounts.length,
           sharedAccounts: includeDetails ? dangerousPatterns.sharedAccounts : dangerousPatterns.sharedAccounts.length,
-          defaultAccounts: includeDetails ? dangerousPatterns.defaultAccounts : dangerousPatterns.defaultAccounts.length
+          defaultAccounts: includeDetails ? dangerousPatterns.defaultAccounts : dangerousPatterns.defaultAccounts.length,
+          unixUserPassword: includeDetails ? dangerousPatterns.unixUserPassword : dangerousPatterns.unixUserPassword.length,
+          sidHistory: includeDetails ? dangerousPatterns.sidHistory : dangerousPatterns.sidHistory.length
         },
         temporalAnalysis: {
           created7days: includeDetails ? temporalAnalysis.created7days : temporalAnalysis.created7days.length,
