@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.2.0
+## Version: 1.3.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -493,154 +493,367 @@ Récupère l'activité d'un utilisateur (dernière connexion, etc.).
 
 ---
 
-## Audit Active Directory
+## Comprehensive Active Directory Audit
 
 ### POST /api/audit
 
-Effectue un audit complet de l'Active Directory et retourne des statistiques de sécurité.
+Performs a comprehensive enterprise-grade security audit of Active Directory with step-by-step progress tracking.
 
 **Body :**
 ```json
 {
-  "includeDetails": true
+  "includeDetails": false,
+  "includeComputers": false
 }
 ```
 
-| Paramètre | Type | Requis | Description |
-|-----------|------|--------|-------------|
-| `includeDetails` | boolean | Non | Inclure les listes détaillées (noms utilisateurs, DNs) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `includeDetails` | boolean | No | Include detailed lists (default: false = counts only) |
+| `includeComputers` | boolean | No | Include computer analysis (slower, default: false) |
 
-**Exemple :**
+**Example:**
 ```bash
 curl -X POST http://localhost:8443/api/audit \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"includeDetails": false}'
+  -d '{"includeDetails": false, "includeComputers": false}'
 ```
 
-**Réponse (includeDetails: false) :**
+---
+
+### Audit Steps and Progress Tracking
+
+The audit executes in 15 logical steps, each with a specific code:
+
+| Step Code | Description |
+|-----------|-------------|
+| `STEP_01_INIT` | Audit initialization |
+| `STEP_02_USER_ENUM` | User enumeration |
+| `STEP_03_PASSWORD_SEC` | Password security analysis |
+| `STEP_04_KERBEROS_SEC` | Kerberos security analysis |
+| `STEP_05_ACCOUNT_STATUS` | Account status analysis |
+| `STEP_06_PRIVILEGED_ACCTS` | Privileged accounts analysis |
+| `STEP_07_SERVICE_ACCTS` | Service accounts detection |
+| `STEP_08_DANGEROUS_PATTERNS` | Dangerous patterns detection |
+| `STEP_09_TEMPORAL_ANALYSIS` | Temporal analysis |
+| `STEP_10_GROUP_ENUM` | Group enumeration |
+| `STEP_11_GROUP_ANALYSIS` | Group analysis |
+| `STEP_12_COMPUTER_ANALYSIS` | Computer analysis (optional) |
+| `STEP_13_OU_ANALYSIS` | OU analysis |
+| `STEP_14_RISK_SCORING` | Risk scoring calculation |
+| `STEP_15_COMPLETED` | Audit completed |
+
+---
+
+### Response Structure
+
+**Response (includeDetails: false):**
 ```json
 {
   "success": true,
   "audit": {
-    "timestamp": "2025-11-27T02:30:00.000Z",
+    "metadata": {
+      "timestamp": "2025-11-28T10:30:15.234Z",
+      "duration": "45.23s",
+      "includeDetails": false,
+      "includeComputers": false
+    },
+    "progress": [
+      {
+        "step": "STEP_01_INIT",
+        "description": "Audit initialization",
+        "status": "completed",
+        "count": 1,
+        "duration": "0.00s"
+      },
+      {
+        "step": "STEP_02_USER_ENUM",
+        "description": "User enumeration",
+        "status": "completed",
+        "count": 1250,
+        "duration": "3.45s"
+      },
+      {
+        "step": "STEP_03_PASSWORD_SEC",
+        "description": "Password security analysis",
+        "status": "completed",
+        "count": 1250,
+        "duration": "2.15s",
+        "findings": {
+          "critical": 15,
+          "high": 8,
+          "medium": 45
+        }
+      }
+    ],
     "summary": {
-      "totalUsers": 1250,
-      "totalGroups": 87,
-      "totalOUs": 23,
-      "disabledUsersCount": 45,
-      "lockedUsersCount": 3,
-      "passwordNeverExpiresCount": 12,
-      "passwordNotRequiredCount": 2,
-      "inactiveUsersCount": 78,
-      "expiredAccountsCount": 5,
-      "expiredPasswordsCount": 156,
-      "emptyGroupsCount": 8
-    },
-    "users": {
-      "disabledUsers": 45,
-      "lockedUsers": 3,
-      "passwordNeverExpires": 12,
-      "passwordNotRequired": 2,
-      "inactiveUsers": 78,
-      "expiredAccounts": 5,
-      "expiredPasswords": 156
-    },
-    "groups": {
-      "emptyGroups": 8
-    },
-    "security": {
-      "domainAdmins": {
-        "count": 5
+      "users": {
+        "total": 1250,
+        "enabled": 1205,
+        "disabled": 45
       },
-      "enterpriseAdmins": {
-        "count": 2
+      "groups": {
+        "total": 87,
+        "empty": 8
       },
-      "administrators": {
-        "count": 8
+      "ous": {
+        "total": 23
+      },
+      "computers": {
+        "total": 0,
+        "enabled": 0,
+        "disabled": 0
       }
+    },
+    "riskScore": {
+      "critical": 15,
+      "high": 42,
+      "medium": 78,
+      "low": 23,
+      "total": 158,
+      "score": 67
+    },
+    "findings": {
+      "critical": [
+        {
+          "type": "PASSWORD_NOT_REQUIRED",
+          "sam": "guest",
+          "dn": "CN=Guest,CN=Users,DC=example,DC=com"
+        },
+        {
+          "type": "REVERSIBLE_ENCRYPTION",
+          "sam": "legacy.app",
+          "dn": "CN=Legacy App,OU=Service,DC=example,DC=com"
+        }
+      ],
+      "high": [...],
+      "medium": [...],
+      "low": [...],
+      "info": [...]
+    },
+    "passwordSecurity": {
+      "neverExpires": 42,
+      "notRequired": 2,
+      "reversibleEncryption": 1,
+      "expired": 15,
+      "veryOld": 67,
+      "cannotChange": 8
+    },
+    "kerberosSecurity": {
+      "spnAccounts": 12,
+      "noPreauth": 0,
+      "unconstrainedDelegation": 1,
+      "constrainedDelegation": 3
+    },
+    "accountStatus": {
+      "disabled": 45,
+      "locked": 3,
+      "expired": 5,
+      "neverLoggedOn": 12,
+      "inactive90": 34,
+      "inactive180": 56,
+      "inactive365": 78
+    },
+    "privilegedAccounts": {
+      "domainAdmins": 5,
+      "enterpriseAdmins": 2,
+      "schemaAdmins": 1,
+      "administrators": 8,
+      "accountOperators": 0,
+      "backupOperators": 2,
+      "serverOperators": 0,
+      "printOperators": 0,
+      "adminCount": 15,
+      "protectedUsers": 8
+    },
+    "serviceAccounts": {
+      "withSpn": 12,
+      "byNaming": 8,
+      "byDescription": 5
+    },
+    "dangerousPatterns": {
+      "passwordInDescription": 0,
+      "testAccounts": 3,
+      "sharedAccounts": 2,
+      "defaultAccounts": 4
+    },
+    "temporalAnalysis": {
+      "createdLast7Days": 2,
+      "createdLast30Days": 8,
+      "createdLast90Days": 15,
+      "modifiedLast7Days": 12,
+      "modifiedLast30Days": 45
+    },
+    "groupAnalysis": {
+      "empty": 8,
+      "oversized500": 3,
+      "oversized1000": 1,
+      "modifiedRecently": 5
+    },
+    "computerAnalysis": {
+      "total": 0,
+      "enabled": 0,
+      "disabled": 0,
+      "inactive90": 0,
+      "servers": 0,
+      "workstations": 0,
+      "domainControllers": 0
     }
   }
 }
 ```
 
-**Réponse (includeDetails: true) :**
-```json
-{
-  "success": true,
-  "audit": {
-    "timestamp": "2025-11-27T02:30:00.000Z",
-    "summary": { ... },
-    "users": {
-      "disabledUsers": ["john.doe", "jane.smith", ...],
-      "lockedUsers": ["bob.locked"],
-      "passwordNeverExpires": ["admin", "service.account", ...],
-      "passwordNotRequired": ["guest"],
-      "inactiveUsers": [
-        {
-          "samAccountName": "old.user",
-          "lastLogon": "2024-05-15 10:23:45 UTC",
-          "daysSinceLastLogon": 195
-        }
-      ],
-      "expiredAccounts": [
-        {
-          "samAccountName": "temp.contractor",
-          "expiryDate": "2024-10-01 00:00:00 UTC"
-        }
-      ],
-      "expiredPasswords": [
-        {
-          "samAccountName": "user1",
-          "passwordExpired": "2024-09-15 08:30:00 UTC",
-          "daysExpired": 73
-        }
-      ]
-    },
-    "groups": {
-      "emptyGroups": ["Old-Group", "Test-Group", ...]
-    },
-    "security": {
-      "domainAdmins": {
-        "count": 5,
-        "members": [
-          "CN=Administrator,CN=Users,DC=example,DC=com",
-          "CN=John Admin,OU=IT,DC=example,DC=com"
-        ]
-      },
-      "enterpriseAdmins": {
-        "count": 2,
-        "members": [...]
-      },
-      "administrators": {
-        "count": 8,
-        "members": [...]
-      }
-    }
-  }
-}
+---
+
+### Security Findings Categories
+
+**Critical Findings:**
+- `PASSWORD_NOT_REQUIRED` - Account with no password required
+- `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption
+- `ASREP_ROASTING_RISK` - Account vulnerable to AS-REP roasting
+- `UNCONSTRAINED_DELEGATION` - Account with unconstrained delegation (very dangerous)
+
+**High Findings:**
+- `KERBEROASTING_RISK` - Account with SPN (Kerberoasting vulnerable)
+- `PASSWORD_NEVER_EXPIRES` - Account with password that never expires
+- `ACCOUNT_LOCKED` - Locked account (possible attack)
+- `PRIVILEGED_ACCOUNT` - Highly privileged account detected
+
+**Medium Findings:**
+- `PASSWORD_VERY_OLD` - Password older than 1 year
+- `PASSWORD_EXPIRED` - Expired password
+- `INACTIVE_180_DAYS` - Account inactive for 180+ days
+- `CONSTRAINED_DELEGATION` - Account with constrained delegation
+
+**Low Findings:**
+- `INACTIVE_90_DAYS` - Account inactive for 90+ days
+- `PASSWORD_CANNOT_CHANGE` - User cannot change password
+- `ACCOUNT_DISABLED` - Disabled account
+- `NEVER_LOGGED_ON` - Account never used
+
+**Info Findings:**
+- `EMPTY_GROUP` - Group with no members
+- `OVERSIZED_GROUP` - Very large group (>500 or >1000 members)
+- `TEST_ACCOUNT` - Possible test account
+- `SHARED_ACCOUNT` - Possible shared account
+
+---
+
+### Risk Scoring Algorithm
+
+The security score ranges from 0 (very bad) to 100 (perfect):
+
+**Risk Points Calculation:**
+- Critical finding: 10 points
+- High finding: 5 points
+- Medium finding: 2 points
+- Low finding: 1 point
+
+**Score Formula:**
+```
+maxRiskPoints = totalUsers × 5
+actualRiskPoints = (critical × 10) + (high × 5) + (medium × 2) + (low × 1)
+score = 100 - min(100, (actualRiskPoints / maxRiskPoints) × 100)
 ```
 
-**Informations auditées :**
+**Score Interpretation:**
+- 90-100: Excellent security posture
+- 75-89: Good security, minor issues
+- 50-74: Moderate security, needs attention
+- 25-49: Poor security, immediate action required
+- 0-24: Critical security issues, urgent remediation needed
 
-**Utilisateurs :**
-- Comptes désactivés
-- Comptes verrouillés
-- Comptes avec mot de passe qui n'expire jamais
-- Comptes sans mot de passe requis
-- Comptes inactifs (> 90 jours sans connexion)
-- Comptes expirés
-- Mots de passe expirés
+---
 
-**Groupes :**
-- Groupes vides (sans membres)
+### Analysis Categories Detail
 
-**Sécurité :**
-- Membres du groupe "Domain Admins"
-- Membres du groupe "Enterprise Admins"
-- Membres du groupe "Administrators"
+**1. Password Security (6 checks):**
+- Never expires (UAC flag 0x10000)
+- Not required (UAC flag 0x20)
+- Reversible encryption (UAC flag 0x80)
+- Expired passwords
+- Very old passwords (>1 year since last set)
+- Cannot change password (UAC flag 0x40)
 
-**Note :** Cet audit peut prendre plusieurs secondes pour les gros annuaires (> 5000 utilisateurs).
+**2. Kerberos Security (4 checks):**
+- SPN accounts (Kerberoasting vulnerability)
+- No preauth required (AS-REP roasting vulnerability)
+- Unconstrained delegation (UAC flag 0x80000)
+- Constrained delegation (trustedToAuthForDelegation)
+
+**3. Account Status (7 checks):**
+- Disabled accounts
+- Locked accounts
+- Expired accounts
+- Never logged on
+- Inactive 90 days
+- Inactive 180 days
+- Inactive 365 days
+
+**4. Privileged Accounts (10 groups):**
+- Domain Admins
+- Enterprise Admins
+- Schema Admins
+- Administrators
+- Account Operators
+- Backup Operators
+- Server Operators
+- Print Operators
+- AdminCount=1
+- Protected Users group
+
+**5. Service Accounts (3 detection methods):**
+- Accounts with SPNs
+- Naming patterns (svc_, service_, sa_, srv_)
+- Description patterns (service, application, app)
+
+**6. Dangerous Patterns (4 types):**
+- Password in description field
+- Test accounts (naming patterns)
+- Shared accounts (naming patterns)
+- Default accounts (guest, krbtgt, administrator)
+
+**7. Temporal Analysis (5 time periods):**
+- Created in last 7 days
+- Created in last 30 days
+- Created in last 90 days
+- Modified in last 7 days
+- Modified in last 30 days
+
+**8. Group Analysis (3 checks):**
+- Empty groups (no members)
+- Oversized groups (>500 or >1000 members)
+- Recently modified groups (last 30 days)
+
+**9. Computer Analysis (7 metrics, optional):**
+- Total computers
+- Enabled/disabled computers
+- Inactive computers (90+ days)
+- Servers (UAC flag 0x2000)
+- Workstations
+- Domain controllers (UAC flag 0x2000 + primaryGroupID 516)
+
+---
+
+### Performance Notes
+
+**Execution Time:**
+- Small directory (<500 users): 5-15 seconds
+- Medium directory (500-2000 users): 15-45 seconds
+- Large directory (2000-10000 users): 45-120 seconds
+- Very large directory (>10000 users): 2-5 minutes
+
+**Resource Usage:**
+- Uses LDAP pagination to handle large directories
+- Maximum 10,000 objects per query
+- Computer analysis adds 30-50% to execution time
+
+**Recommendations:**
+- Use `includeDetails: false` for regular monitoring
+- Use `includeDetails: true` only when investigating specific issues
+- Enable `includeComputers: true` only when needed (slower)
+- Run comprehensive audits during off-peak hours for large directories
 
 ---
 

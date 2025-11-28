@@ -1,6 +1,6 @@
 services:
   ad-collector:
-    image: fuskerrs97/ad-collector-n8n:1.0
+    image: fuskerrs97/ad-collector-n8n:latest
     container_name: ad-collector
     restart: unless-stopped
 
