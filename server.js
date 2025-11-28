@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.2.0');
+console.log('AD Collector for n8n - v1.5.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -247,7 +247,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.2.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.5.0' });
 });
 
 // Test LDAP connection
@@ -1163,7 +1163,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 08: Dangerous Patterns Detection
+    // STEP 08: Dangerous Patterns and Advanced Security Detection
     const dangerousPatterns = {
       passwordInDescription: [],
       testAccounts: [],
@@ -1171,6 +1171,14 @@ app.post('/api/audit', authenticate, async (req, res) => {
       defaultAccounts: [],
       unixUserPassword: [],
       sidHistory: []
+    };
+
+    const advancedSecurity = {
+      lapsReadable: [],
+      dcsyncCapable: [],
+      protectedUsersBypass: [],
+      weakEncryption: [],
+      sensitiveDelegation: []
     };
 
     const pwdPatterns = /(password|passwd|pwd|motdepasse|mdp)[:=]\s*[\w!@#$%^&*()]+/i;
@@ -1220,9 +1228,86 @@ app.post('/api/audit', authenticate, async (req, res) => {
         dangerousPatterns.sidHistory.push({ sam, dn, sidCount: sidHistory.length });
         findings.high.push({ type: 'SID_HISTORY', sam, sidCount: sidHistory.length });
       }
+
+      // ADVANCED SECURITY CHECKS
+
+      // Weak Kerberos encryption (DES-only, RC4-only)
+      const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+      const supportedEncTypes = user.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0];
+
+      // DES only (0x2 = DES_CBC_CRC, 0x4 = DES_CBC_MD5)
+      if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
+        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'DES-only' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', sam, dn });
+      }
+      // Use DES keys flag
+      else if (uac & 0x200000) {
+        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'USE_DES_KEY_ONLY' });
+        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', sam, dn });
+      }
+
+      // Sensitive account with delegation enabled (not recommended)
+      const adminCount = user.attributes.find(a => a.type === 'adminCount')?.values[0];
+      const trustedForDelegation = uac & 0x80000; // TRUSTED_FOR_DELEGATION
+      const trustedToAuthForDelegation = user.attributes.find(a => a.type === 'userAccountControl')?.values[0];
+
+      if (adminCount === '1' && trustedForDelegation) {
+        advancedSecurity.sensitiveDelegation.push({ sam, dn, reason: 'Admin with unconstrained delegation' });
+        findings.critical.push({ type: 'SENSITIVE_DELEGATION', sam, dn });
+      }
     }
 
-    trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns detection', {
+    // Check for LAPS readable permissions (simplified - check if ms-Mcs-AdmPwd is set)
+    // In a full implementation, this would check ACLs, but we'll check if the attribute exists
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
+      const dn = user.objectName;
+      const lapsPassword = user.attributes.find(a => a.type === 'ms-Mcs-AdmPwd')?.values[0];
+
+      if (lapsPassword) {
+        advancedSecurity.lapsReadable.push({ sam, dn });
+        findings.info.push({ type: 'LAPS_PASSWORD_SET', sam, dn });
+      }
+    }
+
+    // Check for DCSync capable users (Replicating Directory Changes rights)
+    // This requires checking specific extended rights on the domain object
+    // Simplified: Check for users in groups known to have DCSync rights
+    const dcsyncGroups = ['Domain Admins', 'Enterprise Admins', 'Administrators'];
+    for (const groupName of dcsyncGroups) {
+      try {
+        const group = await searchOne(`(sAMAccountName=${escapeLdap(groupName)})`);
+        const members = group.attributes.find(a => a.type === 'member')?.values || [];
+        for (const memberDn of members) {
+          // Extract CN from DN
+          const cnMatch = memberDn.match(/^CN=([^,]+)/);
+          if (cnMatch) {
+            const memberCn = cnMatch[1];
+            advancedSecurity.dcsyncCapable.push({ dn: memberDn, group: groupName });
+            findings.info.push({ type: 'DCSYNC_CAPABLE', member: memberCn, group: groupName });
+          }
+        }
+      } catch (e) {
+        // Group doesn't exist
+      }
+    }
+
+    // Check for Protected Users bypass (privileged accounts NOT in Protected Users)
+    const protectedUsersMembers = privilegedAccounts.protectedUsers.map(u => u.dn);
+    const highPrivilegeAccounts = [
+      ...privilegedAccounts.domainAdmins,
+      ...privilegedAccounts.enterpriseAdmins,
+      ...privilegedAccounts.schemaAdmins
+    ];
+
+    for (const account of highPrivilegeAccounts) {
+      if (!protectedUsersMembers.includes(account.dn)) {
+        advancedSecurity.protectedUsersBypass.push(account);
+        findings.medium.push({ type: 'NOT_IN_PROTECTED_USERS', dn: account.dn });
+      }
+    }
+
+    trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
       count: dangerousPatterns.passwordInDescription.length + dangerousPatterns.testAccounts.length,
       findings: {
         passwordInDesc: dangerousPatterns.passwordInDescription.length,
@@ -1523,6 +1608,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
           defaultAccounts: includeDetails ? dangerousPatterns.defaultAccounts : dangerousPatterns.defaultAccounts.length,
           unixUserPassword: includeDetails ? dangerousPatterns.unixUserPassword : dangerousPatterns.unixUserPassword.length,
           sidHistory: includeDetails ? dangerousPatterns.sidHistory : dangerousPatterns.sidHistory.length
+        },
+        advancedSecurity: {
+          lapsReadable: includeDetails ? advancedSecurity.lapsReadable : advancedSecurity.lapsReadable.length,
+          dcsyncCapable: includeDetails ? advancedSecurity.dcsyncCapable : advancedSecurity.dcsyncCapable.length,
+          protectedUsersBypass: includeDetails ? advancedSecurity.protectedUsersBypass : advancedSecurity.protectedUsersBypass.length,
+          weakEncryption: includeDetails ? advancedSecurity.weakEncryption : advancedSecurity.weakEncryption.length,
+          sensitiveDelegation: includeDetails ? advancedSecurity.sensitiveDelegation : advancedSecurity.sensitiveDelegation.length
         },
         temporalAnalysis: {
           created7days: includeDetails ? temporalAnalysis.created7days : temporalAnalysis.created7days.length,

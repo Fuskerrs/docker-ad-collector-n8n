@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.3.0
+## Version: 1.5.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -664,6 +664,7 @@ The audit executes in 15 logical steps, each with a specific code:
       "backupOperators": 2,
       "serverOperators": 0,
       "printOperators": 0,
+      "remoteDesktopUsers": 3,
       "adminCount": 15,
       "protectedUsers": 8
     },
@@ -676,7 +677,16 @@ The audit executes in 15 logical steps, each with a specific code:
       "passwordInDescription": 0,
       "testAccounts": 3,
       "sharedAccounts": 2,
-      "defaultAccounts": 4
+      "defaultAccounts": 4,
+      "unixUserPassword": 0,
+      "sidHistory": 0
+    },
+    "advancedSecurity": {
+      "lapsReadable": 0,
+      "dcsyncCapable": 20,
+      "protectedUsersBypass": 15,
+      "weakEncryption": 0,
+      "sensitiveDelegation": 0
     },
     "temporalAnalysis": {
       "createdLast7Days": 2,
@@ -713,18 +723,26 @@ The audit executes in 15 logical steps, each with a specific code:
 - `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption
 - `ASREP_ROASTING_RISK` - Account vulnerable to AS-REP roasting
 - `UNCONSTRAINED_DELEGATION` - Account with unconstrained delegation (very dangerous)
+- `UNIX_USER_PASSWORD` - Unix password attribute set (plaintext password risk)
+- `SENSITIVE_DELEGATION` - Privileged account (adminCount=1) with unconstrained delegation
 
 **High Findings:**
 - `KERBEROASTING_RISK` - Account with SPN (Kerberoasting vulnerable)
 - `PASSWORD_NEVER_EXPIRES` - Account with password that never expires
 - `ACCOUNT_LOCKED` - Locked account (possible attack)
 - `PRIVILEGED_ACCOUNT` - Highly privileged account detected
+- `SID_HISTORY` - SID History attribute populated (privilege escalation risk)
+- `WEAK_ENCRYPTION_DES` - Account configured for DES-only Kerberos encryption
+- `OVERSIZED_GROUP_HIGH` - Group with >500 members (management difficulty)
 
 **Medium Findings:**
 - `PASSWORD_VERY_OLD` - Password older than 1 year
 - `PASSWORD_EXPIRED` - Expired password
 - `INACTIVE_180_DAYS` - Account inactive for 180+ days
 - `CONSTRAINED_DELEGATION` - Account with constrained delegation
+- `NOT_IN_PROTECTED_USERS` - Privileged account not in Protected Users group
+- `WEAK_ENCRYPTION_FLAG` - Account with USE_DES_KEY_ONLY flag set
+- `OVERSIZED_GROUP` - Group with >100 members
 
 **Low Findings:**
 - `INACTIVE_90_DAYS` - Account inactive for 90+ days
@@ -734,9 +752,11 @@ The audit executes in 15 logical steps, each with a specific code:
 
 **Info Findings:**
 - `EMPTY_GROUP` - Group with no members
-- `OVERSIZED_GROUP` - Very large group (>500 or >1000 members)
+- `OVERSIZED_GROUP_CRITICAL` - Very large group (>1000 members)
 - `TEST_ACCOUNT` - Possible test account
 - `SHARED_ACCOUNT` - Possible shared account
+- `LAPS_PASSWORD_SET` - Computer has LAPS password set (informational)
+- `DCSYNC_CAPABLE` - Account member of DA/EA/Administrators (DCSync capable)
 
 ---
 
@@ -819,7 +839,7 @@ score = 100 - 5 - 19 = 76
 - Inactive 180 days
 - Inactive 365 days
 
-**4. Privileged Accounts (10 groups):**
+**4. Privileged Accounts (11 groups):**
 - Domain Admins
 - Enterprise Admins
 - Schema Admins
@@ -828,6 +848,7 @@ score = 100 - 5 - 19 = 76
 - Backup Operators
 - Server Operators
 - Print Operators
+- Remote Desktop Users
 - AdminCount=1
 - Protected Users group
 
@@ -836,25 +857,34 @@ score = 100 - 5 - 19 = 76
 - Naming patterns (svc_, service_, sa_, srv_)
 - Description patterns (service, application, app)
 
-**6. Dangerous Patterns (4 types):**
-- Password in description field
+**6. Dangerous Patterns (6 types):**
+- Password in description field (strict regex)
 - Test accounts (naming patterns)
 - Shared accounts (naming patterns)
 - Default accounts (guest, krbtgt, administrator)
+- UnixUserPassword attribute set (plaintext password risk)
+- SID History populated (privilege escalation vector)
 
-**7. Temporal Analysis (5 time periods):**
+**7. Advanced Security (5 enterprise checks):**
+- LAPS passwords readable (ms-Mcs-AdmPwd attribute)
+- DCSync capable accounts (DA/EA/Administrators membership)
+- Protected Users bypass (privileged accounts NOT in Protected Users)
+- Weak Kerberos encryption (DES-only or USE_DES_KEY_ONLY flag)
+- Sensitive delegation (adminCount=1 + unconstrained delegation)
+
+**8. Temporal Analysis (5 time periods):**
 - Created in last 7 days
 - Created in last 30 days
 - Created in last 90 days
 - Modified in last 7 days
 - Modified in last 30 days
 
-**8. Group Analysis (3 checks):**
+**9. Group Analysis (3 checks):**
 - Empty groups (no members)
-- Oversized groups (>500 or >1000 members)
+- Oversized groups (>100, >500, or >1000 members with severity levels)
 - Recently modified groups (last 30 days)
 
-**9. Computer Analysis (7 metrics, optional):**
+**10. Computer Analysis (7 metrics, optional):**
 - Total computers
 - Enabled/disabled computers
 - Inactive computers (90+ days)

@@ -67,7 +67,7 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 -  **OU Management** - Create, modify, list organizational units
 -  **Advanced Search** - Filter and find users, groups, OUs
 -  **Activity Tracking** - Login times, password expiry, account status
--  **Security Audit** - Enterprise-grade AD security audit with 15-step progressive tracking, risk scoring (0-100), Kerberos security analysis, password security, privileged accounts detection, findings by severity
+-  **Security Audit** - Enterprise-grade AD security audit with 15-step progressive tracking, risk scoring (0-100), Kerberos security analysis, password security, privileged accounts detection, advanced security checks (LAPS, DCSync, Protected Users, weak encryption, sensitive delegation), findings by severity
 
 ###  Developer Friendly
 -  **27 REST API Endpoints** - Full CRUD operations
