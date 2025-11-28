@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.1.2
+## Version: 1.2.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -490,6 +490,157 @@ Récupère l'activité d'un utilisateur (dernière connexion, etc.).
   }
 }
 ```
+
+---
+
+## Audit Active Directory
+
+### POST /api/audit
+
+Effectue un audit complet de l'Active Directory et retourne des statistiques de sécurité.
+
+**Body :**
+```json
+{
+  "includeDetails": true
+}
+```
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `includeDetails` | boolean | Non | Inclure les listes détaillées (noms utilisateurs, DNs) |
+
+**Exemple :**
+```bash
+curl -X POST http://localhost:8443/api/audit \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"includeDetails": false}'
+```
+
+**Réponse (includeDetails: false) :**
+```json
+{
+  "success": true,
+  "audit": {
+    "timestamp": "2025-11-27T02:30:00.000Z",
+    "summary": {
+      "totalUsers": 1250,
+      "totalGroups": 87,
+      "totalOUs": 23,
+      "disabledUsersCount": 45,
+      "lockedUsersCount": 3,
+      "passwordNeverExpiresCount": 12,
+      "passwordNotRequiredCount": 2,
+      "inactiveUsersCount": 78,
+      "expiredAccountsCount": 5,
+      "expiredPasswordsCount": 156,
+      "emptyGroupsCount": 8
+    },
+    "users": {
+      "disabledUsers": 45,
+      "lockedUsers": 3,
+      "passwordNeverExpires": 12,
+      "passwordNotRequired": 2,
+      "inactiveUsers": 78,
+      "expiredAccounts": 5,
+      "expiredPasswords": 156
+    },
+    "groups": {
+      "emptyGroups": 8
+    },
+    "security": {
+      "domainAdmins": {
+        "count": 5
+      },
+      "enterpriseAdmins": {
+        "count": 2
+      },
+      "administrators": {
+        "count": 8
+      }
+    }
+  }
+}
+```
+
+**Réponse (includeDetails: true) :**
+```json
+{
+  "success": true,
+  "audit": {
+    "timestamp": "2025-11-27T02:30:00.000Z",
+    "summary": { ... },
+    "users": {
+      "disabledUsers": ["john.doe", "jane.smith", ...],
+      "lockedUsers": ["bob.locked"],
+      "passwordNeverExpires": ["admin", "service.account", ...],
+      "passwordNotRequired": ["guest"],
+      "inactiveUsers": [
+        {
+          "samAccountName": "old.user",
+          "lastLogon": "2024-05-15 10:23:45 UTC",
+          "daysSinceLastLogon": 195
+        }
+      ],
+      "expiredAccounts": [
+        {
+          "samAccountName": "temp.contractor",
+          "expiryDate": "2024-10-01 00:00:00 UTC"
+        }
+      ],
+      "expiredPasswords": [
+        {
+          "samAccountName": "user1",
+          "passwordExpired": "2024-09-15 08:30:00 UTC",
+          "daysExpired": 73
+        }
+      ]
+    },
+    "groups": {
+      "emptyGroups": ["Old-Group", "Test-Group", ...]
+    },
+    "security": {
+      "domainAdmins": {
+        "count": 5,
+        "members": [
+          "CN=Administrator,CN=Users,DC=example,DC=com",
+          "CN=John Admin,OU=IT,DC=example,DC=com"
+        ]
+      },
+      "enterpriseAdmins": {
+        "count": 2,
+        "members": [...]
+      },
+      "administrators": {
+        "count": 8,
+        "members": [...]
+      }
+    }
+  }
+}
+```
+
+**Informations auditées :**
+
+**Utilisateurs :**
+- Comptes désactivés
+- Comptes verrouillés
+- Comptes avec mot de passe qui n'expire jamais
+- Comptes sans mot de passe requis
+- Comptes inactifs (> 90 jours sans connexion)
+- Comptes expirés
+- Mots de passe expirés
+
+**Groupes :**
+- Groupes vides (sans membres)
+
+**Sécurité :**
+- Membres du groupe "Domain Admins"
+- Membres du groupe "Enterprise Admins"
+- Membres du groupe "Administrators"
+
+**Note :** Cet audit peut prendre plusieurs secondes pour les gros annuaires (> 5000 utilisateurs).
 
 ---
 

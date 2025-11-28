@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.1.2');
+console.log('AD Collector for n8n - v1.2.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -247,7 +247,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.1.2' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.2.0' });
 });
 
 // Test LDAP connection
@@ -822,6 +822,184 @@ app.post('/api/users/get-activity', authenticate, async (req, res) => {
         whenCreated: whenCreatedAttr ? whenCreatedAttr.values[0] : null,
         whenChanged: whenChangedAttr ? whenChangedAttr.values[0] : null
       }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// AD Audit
+app.post('/api/audit', authenticate, async (req, res) => {
+  try {
+    const { includeDetails } = req.body;
+    const auditResults = {
+      timestamp: new Date().toISOString(),
+      summary: {},
+      users: {},
+      groups: {},
+      security: {}
+    };
+
+    // Get all users
+    const allUsers = await searchMany('(&(objectClass=user)(objectCategory=person))', ['*'], 10000);
+
+    // Analyze users
+    const disabledUsers = [];
+    const lockedUsers = [];
+    const passwordNeverExpires = [];
+    const passwordNotRequired = [];
+    const inactiveUsers = [];
+    const expiredAccounts = [];
+    const expiredPasswords = [];
+
+    const now = Date.now();
+    const inactivityThreshold = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
+
+    for (const user of allUsers) {
+      const samAttr = user.attributes.find(a => a.type === 'sAMAccountName');
+      const samAccountName = samAttr ? samAttr.values[0] : 'Unknown';
+
+      const uacAttr = user.attributes.find(a => a.type === 'userAccountControl');
+      const uac = uacAttr ? parseInt(uacAttr.values[0]) : 0;
+
+      // Check if disabled
+      if (uac & 0x2) {
+        disabledUsers.push(samAccountName);
+      }
+
+      // Check if locked
+      const lockoutAttr = user.attributes.find(a => a.type === 'lockoutTime');
+      if (lockoutAttr && lockoutAttr.values[0] !== '0') {
+        lockedUsers.push(samAccountName);
+      }
+
+      // Check password never expires
+      if (uac & 0x10000) {
+        passwordNeverExpires.push(samAccountName);
+      }
+
+      // Check password not required
+      if (uac & 0x20) {
+        passwordNotRequired.push(samAccountName);
+      }
+
+      // Check inactive users
+      const lastLogonAttr = user.attributes.find(a => a.type === 'lastLogonTimestamp');
+      if (lastLogonAttr && lastLogonAttr.values[0] !== '0') {
+        const lastLogonDate = fileTimeToDate(lastLogonAttr.values[0]);
+        if (lastLogonDate && (now - lastLogonDate.getTime()) > inactivityThreshold) {
+          inactiveUsers.push({
+            samAccountName,
+            lastLogon: formatDate(lastLogonDate),
+            daysSinceLastLogon: Math.floor((now - lastLogonDate.getTime()) / (24 * 60 * 60 * 1000))
+          });
+        }
+      }
+
+      // Check expired accounts
+      const accountExpiresAttr = user.attributes.find(a => a.type === 'accountExpires');
+      if (accountExpiresAttr && accountExpiresAttr.values[0] !== '0' && accountExpiresAttr.values[0] !== '9223372036854775807') {
+        const expiryDate = fileTimeToDate(accountExpiresAttr.values[0]);
+        if (expiryDate && expiryDate.getTime() < now) {
+          expiredAccounts.push({
+            samAccountName,
+            expiryDate: formatDate(expiryDate)
+          });
+        }
+      }
+
+      // Check expired passwords
+      const pwdLastSetAttr = user.attributes.find(a => a.type === 'pwdLastSet');
+      if (pwdLastSetAttr && pwdLastSetAttr.values[0] !== '0') {
+        const pwdLastSetDate = fileTimeToDate(pwdLastSetAttr.values[0]);
+        if (pwdLastSetDate) {
+          const maxPwdAge = parseInt(process.env.MAX_PWD_AGE_DAYS) || 90;
+          const expiryDate = new Date(pwdLastSetDate);
+          expiryDate.setDate(expiryDate.getDate() + maxPwdAge);
+
+          if (expiryDate.getTime() < now && !(uac & 0x10000)) {
+            expiredPasswords.push({
+              samAccountName,
+              passwordExpired: formatDate(expiryDate),
+              daysExpired: Math.floor((now - expiryDate.getTime()) / (24 * 60 * 60 * 1000))
+            });
+          }
+        }
+      }
+    }
+
+    // Get privileged groups
+    const domainAdmins = await searchOne('(sAMAccountName=Domain Admins)').catch(() => null);
+    const enterpriseAdmins = await searchOne('(sAMAccountName=Enterprise Admins)').catch(() => null);
+    const administrators = await searchOne('(sAMAccountName=Administrators)').catch(() => null);
+
+    const domainAdminMembers = domainAdmins ? (domainAdmins.attributes.find(a => a.type === 'member')?.values || []) : [];
+    const enterpriseAdminMembers = enterpriseAdmins ? (enterpriseAdmins.attributes.find(a => a.type === 'member')?.values || []) : [];
+    const administratorMembers = administrators ? (administrators.attributes.find(a => a.type === 'member')?.values || []) : [];
+
+    // Get all groups
+    const allGroups = await searchMany('(objectClass=group)', ['*'], 10000);
+    const emptyGroups = allGroups.filter(g => {
+      const memberAttr = g.attributes.find(a => a.type === 'member');
+      return !memberAttr || memberAttr.values.length === 0;
+    }).map(g => {
+      const samAttr = g.attributes.find(a => a.type === 'sAMAccountName');
+      return samAttr ? samAttr.values[0] : 'Unknown';
+    });
+
+    // Get all OUs
+    const allOus = await searchMany('(objectClass=organizationalUnit)', ['*'], 10000);
+
+    // Build summary
+    auditResults.summary = {
+      totalUsers: allUsers.length,
+      totalGroups: allGroups.length,
+      totalOUs: allOus.length,
+      disabledUsersCount: disabledUsers.length,
+      lockedUsersCount: lockedUsers.length,
+      passwordNeverExpiresCount: passwordNeverExpires.length,
+      passwordNotRequiredCount: passwordNotRequired.length,
+      inactiveUsersCount: inactiveUsers.length,
+      expiredAccountsCount: expiredAccounts.length,
+      expiredPasswordsCount: expiredPasswords.length,
+      emptyGroupsCount: emptyGroups.length
+    };
+
+    // Build user details
+    auditResults.users = {
+      disabledUsers: includeDetails ? disabledUsers : disabledUsers.length,
+      lockedUsers: includeDetails ? lockedUsers : lockedUsers.length,
+      passwordNeverExpires: includeDetails ? passwordNeverExpires : passwordNeverExpires.length,
+      passwordNotRequired: includeDetails ? passwordNotRequired : passwordNotRequired.length,
+      inactiveUsers: includeDetails ? inactiveUsers : inactiveUsers.length,
+      expiredAccounts: includeDetails ? expiredAccounts : expiredAccounts.length,
+      expiredPasswords: includeDetails ? expiredPasswords : expiredPasswords.length
+    };
+
+    // Build group details
+    auditResults.groups = {
+      emptyGroups: includeDetails ? emptyGroups : emptyGroups.length
+    };
+
+    // Build security details
+    auditResults.security = {
+      domainAdmins: {
+        count: domainAdminMembers.length,
+        members: includeDetails ? domainAdminMembers : undefined
+      },
+      enterpriseAdmins: {
+        count: enterpriseAdminMembers.length,
+        members: includeDetails ? enterpriseAdminMembers : undefined
+      },
+      administrators: {
+        count: administratorMembers.length,
+        members: includeDetails ? administratorMembers : undefined
+      }
+    };
+
+    res.json({
+      success: true,
+      audit: auditResults
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
