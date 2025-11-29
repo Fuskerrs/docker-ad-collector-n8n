@@ -45,6 +45,27 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ---
 
+##  Latest Updates
+
+### v1.7.1 (November 2025)
+**SSE Buffering Fix + Audit Cache**
+
+- ✅ **Fixed SSE `complete` event** - Force flush before closing connection to ensure final event is delivered
+- ✅ **Audit Result Cache** - 5-minute in-memory cache to avoid duplicate audits
+- ✅ **New Endpoint**: `GET /api/audit/last` - Returns cached audit result (no re-run)
+- ✅ **Fallback Support** - Frontend can use cached results when SSE `complete` event fails
+- 🚀 **Performance**: Eliminated duplicate audits in fallback scenarios
+
+### v1.7.0 (November 2025)
+**Server-Sent Events (SSE) for Real-Time Progress**
+
+- ✅ **New Endpoint**: `POST /api/audit/stream` - Real-time audit progress via SSE
+- ✅ **15 Progress Events** - Step-by-step feedback during audit execution
+- ✅ **Better UX** - Enable progress bars and real-time status updates in UI
+- ✅ **Backward Compatible** - Original `POST /api/audit` endpoint unchanged
+
+---
+
 ##  Features
 
 ###  Security First

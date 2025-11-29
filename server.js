@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.0');
+console.log('AD Collector for n8n - v1.7.1');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -64,6 +64,13 @@ console.log('========================================\n');
 
 const app = express();
 app.use(express.json());
+
+// In-memory cache for last audit result (avoid re-running audit on fallback)
+let lastAuditCache = {
+  result: null,
+  timestamp: null,
+  ttl: 5 * 60 * 1000 // 5 minutes TTL
+};
 
 // Authentication middleware
 function authenticate(req, res, next) {
@@ -247,7 +254,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.1' });
 });
 
 // Test LDAP connection
@@ -1697,6 +1704,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
       };
     }
 
+    // Cache the result for fallback (5 min TTL)
+    lastAuditCache = {
+      result: response,
+      timestamp: Date.now()
+    };
+
     res.json(response);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message, stack: error.stack });
@@ -2523,16 +2536,63 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       };
     }
 
+    // Cache the result for fallback (5 min TTL)
+    lastAuditCache = {
+      result: finalResponse,
+      timestamp: Date.now()
+    };
+
     // Send final result
     sendEvent('complete', finalResponse);
 
-    // Close connection
-    res.end();
+    // Force flush before closing (important for SSE!)
+    // Use setImmediate to ensure the event is written before res.end()
+    setImmediate(() => {
+      res.end();
+    });
 
   } catch (error) {
     res.write(`event: error\n`);
     res.write(`data: ${JSON.stringify({ success: false, error: error.message })}\n\n`);
     res.end();
+  }
+});
+
+// Get last audit result (cached, no re-run)
+app.get('/api/audit/last', authenticate, (req, res) => {
+  try {
+    // Check if cache exists and is not expired
+    if (!lastAuditCache.result) {
+      return res.status(404).json({
+        success: false,
+        error: 'No cached audit result available. Run an audit first.',
+        cacheStatus: 'empty'
+      });
+    }
+
+    const cacheAge = Date.now() - lastAuditCache.timestamp;
+    if (cacheAge > lastAuditCache.ttl) {
+      return res.status(410).json({
+        success: false,
+        error: 'Cached audit result expired. Please run a new audit.',
+        cacheStatus: 'expired',
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`
+      });
+    }
+
+    console.log(`[Audit Cache] Returning cached result (age: ${Math.floor(cacheAge / 1000)}s)`);
+
+    // Return cached result with cache metadata
+    res.json({
+      ...lastAuditCache.result,
+      cacheMetadata: {
+        cached: true,
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`,
+        cachedAt: new Date(lastAuditCache.timestamp).toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

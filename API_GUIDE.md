@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.7.0
+## Version: 1.7.1
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -1131,6 +1131,82 @@ function useAuditSSE(includeDetails = false, includeComputers = false) {
 - List completed steps with their durations
 - Display intermediate counts (users found, issues detected)
 - Animate step completions for better visual feedback
+
+---
+
+### GET /api/audit/last
+
+**NEW in v1.7.1** - Returns the last cached audit result without re-running the audit.
+
+**Why use this endpoint?**
+- ✅ No re-execution of the audit (instant response)
+- ✅ Useful as fallback when SSE `complete` event is not received
+- ✅ Cached result valid for 5 minutes
+- ✅ Includes cache metadata (age, timestamp)
+
+**Parameters:** None (GET request, no body)
+
+**Cache Behavior:**
+- Results are cached in memory for **5 minutes** after each audit execution
+- Cache is populated by both `POST /api/audit` and `POST /api/audit/stream`
+- If cache is empty or expired, returns 404/410 error
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -X GET http://localhost:8443/api/audit/last \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "audit": {
+    "metadata": { ... },
+    "summary": { ... },
+    "riskScore": { ... },
+    "findings": { ... },
+    ...
+  },
+  "cacheMetadata": {
+    "cached": true,
+    "cacheAge": "42s",
+    "cachedAt": "2025-11-29T01:35:00.000Z"
+  }
+}
+```
+
+**Error Response - No Cache (404):**
+```json
+{
+  "success": false,
+  "error": "No cached audit result available. Run an audit first.",
+  "cacheStatus": "empty"
+}
+```
+
+**Error Response - Expired (410):**
+```json
+{
+  "success": false,
+  "error": "Cached audit result expired. Please run a new audit.",
+  "cacheStatus": "expired",
+  "cacheAge": "320s"
+}
+```
+
+**Use Cases:**
+1. **SSE Fallback**: When `POST /api/audit/stream` doesn't send `complete` event, frontend can fetch the cached result instead of re-running
+2. **Quick Refresh**: Get latest audit results without waiting 2-3 seconds
+3. **Dashboard Display**: Show cached results immediately while new audit runs in background
+
+**Important Notes:**
+- Cache is **in-memory only** - cleared on server restart
+- Cache TTL is **5 minutes** (300 seconds)
+- Each new audit (via `/api/audit` or `/api/audit/stream`) updates the cache
+- Returns the **complete audit object**, identical to `/api/audit` response
 
 ---
 
