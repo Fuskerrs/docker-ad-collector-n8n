@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.6.0
+## Version: 1.7.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -928,6 +928,209 @@ score = 100 - 5 - 19 = 76
 - Use `includeDetails: true` only when investigating specific issues
 - Enable `includeComputers: true` only when needed (slower)
 - Run comprehensive audits during off-peak hours for large directories
+
+---
+
+### POST /api/audit/stream
+
+**NEW in v1.7.0** - Performs the same comprehensive audit as `/api/audit` but streams real-time progress updates using Server-Sent Events (SSE).
+
+**Why use SSE?**
+- ✅ Real-time progress tracking (15 steps)
+- ✅ Display status of each step as it completes
+- ✅ Duration and count for each step
+- ✅ Better user experience (no blank screen during 2-5s audit)
+- ✅ Implement progress bars and step-by-step UI feedback
+
+**Body:** (same as `/api/audit`)
+```json
+{
+  "includeDetails": false,
+  "includeComputers": false
+}
+```
+
+**Response:** Server-Sent Events (SSE) stream
+
+**Event Types:**
+
+| Event | When | Data |
+|-------|------|------|
+| `connected` | On connection | Connection timestamp |
+| `progress` | 15 times during audit | Step completion with stats |
+| `complete` | At the end | Full audit report (identical to `/api/audit` response) |
+| `error` | On error | Error message |
+
+**Example using curl:**
+```bash
+TOKEN="your-api-token"
+
+curl -N -X POST http://localhost:8443/api/audit/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"includeDetails": false, "includeComputers": false}'
+```
+
+**Example output:**
+```
+event: connected
+data: {"message":"Audit stream connected","timestamp":"2025-03-29T10:30:45.123Z"}
+
+event: progress
+data: {"step":"STEP_01_INIT","description":"Audit initialization","status":"completed","count":1,"duration":"0.01s"}
+
+event: progress
+data: {"step":"STEP_02_USER_ENUM","description":"User enumeration","status":"completed","count":7443,"duration":"1.23s"}
+
+event: progress
+data: {"step":"STEP_03_PASSWORD_SEC","description":"Password security analysis","status":"completed","count":892,"duration":"0.45s","findings":{"neverExpires":712,"notRequired":9,"reversibleEncryption":0,"expired":171}}
+
+... (12 more progress events)
+
+event: complete
+data: {"success":true,"audit":{...full audit report...}}
+```
+
+**JavaScript Example:**
+```javascript
+async function startAuditWithSSE() {
+  const response = await fetch('http://localhost:8443/api/audit/stream', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer YOUR_TOKEN',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ includeDetails: false, includeComputers: false })
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\n\n');
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      const eventMatch = line.match(/^event: (.+)\ndata: (.+)$/s);
+      if (eventMatch) {
+        const eventType = eventMatch[1];
+        const data = JSON.parse(eventMatch[2]);
+
+        switch (eventType) {
+          case 'connected':
+            console.log('Connected:', data.timestamp);
+            break;
+
+          case 'progress':
+            const progress = (parseInt(data.step.match(/\d+/)[0]) / 15) * 100;
+            console.log(`Progress: ${progress.toFixed(0)}% - ${data.description}`);
+            updateProgressBar(progress, data.description);
+            break;
+
+          case 'complete':
+            console.log('Audit complete!', data.audit);
+            displayResults(data.audit);
+            break;
+
+          case 'error':
+            console.error('Error:', data.error);
+            break;
+        }
+      }
+    }
+  }
+}
+
+function updateProgressBar(percent, description) {
+  document.getElementById('progress-bar').style.width = `${percent}%`;
+  document.getElementById('progress-text').textContent = description;
+}
+
+function displayResults(audit) {
+  document.getElementById('risk-score').textContent = audit.riskScore.score;
+  document.getElementById('critical-findings').textContent = audit.riskScore.critical;
+  // ... display other results
+}
+```
+
+**React Hook Example:**
+```jsx
+import { useState, useEffect } from 'react';
+
+function useAuditSSE(includeDetails = false, includeComputers = false) {
+  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState('');
+  const [auditResult, setAuditResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const startAudit = async () => {
+    const response = await fetch('/api/audit/stream', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${YOUR_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ includeDetails, includeComputers })
+    });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const eventMatch = line.match(/^event: (.+)\ndata: (.+)$/s);
+        if (eventMatch) {
+          const eventType = eventMatch[1];
+          const data = JSON.parse(eventMatch[2]);
+
+          if (eventType === 'progress') {
+            const stepNumber = parseInt(data.step.match(/\d+/)[0]);
+            setProgress((stepNumber / 15) * 100);
+            setCurrentStep(data.description);
+          } else if (eventType === 'complete') {
+            setProgress(100);
+            setAuditResult(data.audit);
+          } else if (eventType === 'error') {
+            setError(data.error);
+          }
+        }
+      }
+    }
+  };
+
+  return { progress, currentStep, auditResult, error, startAudit };
+}
+```
+
+**Important Notes:**
+- SSE is unidirectional (server → client only)
+- No feedback loop required - server continues automatically
+- Connection closes automatically after `complete` or `error` event
+- Handle network errors and implement reconnection logic
+- Consider a 30-second timeout on the client side
+- The final `complete` event contains the exact same data structure as `/api/audit`
+
+**UI/UX Recommendations:**
+- Display a progress bar showing completion percentage (step / 15 × 100)
+- Show the current step description in real-time
+- List completed steps with their durations
+- Display intermediate counts (users found, issues detected)
+- Animate step completions for better visual feedback
 
 ---
 

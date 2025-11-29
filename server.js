@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.6.0');
+console.log('AD Collector for n8n - v1.7.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -247,7 +247,7 @@ function formatDate(date) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.6.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.0' });
 });
 
 // Test LDAP connection
@@ -1700,6 +1700,839 @@ app.post('/api/audit', authenticate, async (req, res) => {
     res.json(response);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message, stack: error.stack });
+  }
+});
+
+// ========== AUDIT WITH STREAMING (SSE) ==========
+app.post('/api/audit/stream', authenticate, async (req, res) => {
+  try {
+    const { includeDetails, includeComputers } = req.body;
+    const auditStart = Date.now();
+    const progress = [];
+    const findings = {
+      critical: [],
+      high: [],
+      medium: [],
+      low: [],
+      info: []
+    };
+
+    // Configure SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+
+    // Helper to send SSE events
+    function sendEvent(eventType, data) {
+      res.write(`event: ${eventType}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+
+    // Helper to track progress AND send event
+    function trackStep(code, description, data) {
+      const stepData = {
+        step: code,
+        description,
+        status: 'completed',
+        count: data.count || 0,
+        duration: `${((Date.now() - stepStart) / 1000).toFixed(2)}s`
+      };
+      if (data.findings) stepData.findings = data.findings;
+      progress.push(stepData);
+
+      // Send real-time event
+      sendEvent('progress', stepData);
+
+      console.log(`[AUDIT] ${code}: ${description} - ${stepData.count} items - ${stepData.duration}`);
+    }
+
+    let stepStart = Date.now();
+
+    // Send initial connection event
+    sendEvent('connected', { message: 'Audit stream connected', timestamp: new Date().toISOString() });
+
+    // STEP 01: Init
+    trackStep('STEP_01_INIT', 'Audit initialization', { count: 1 });
+    stepStart = Date.now();
+
+    // STEP 02: User Enumeration
+    const allUsers = await searchMany('(&(objectClass=user)(objectCategory=person))', ['*'], 10000);
+    trackStep('STEP_02_USER_ENUM', 'User enumeration', { count: allUsers.length });
+    stepStart = Date.now();
+
+    // STEP 03: Password Security Analysis (reuse existing code)
+    const passwordIssues = {
+      neverExpires: [],
+      notRequired: [],
+      reversibleEncryption: [],
+      expired: [],
+      veryOld: [],
+      cannotChange: []
+    };
+
+    const now = Date.now();
+    const maxPwdAge = parseInt(process.env.MAX_PWD_AGE_DAYS) || 90;
+    const veryOldThreshold = 365;
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+      const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+      const dn = user.objectName;
+
+      if (uac & 0x10000) passwordIssues.neverExpires.push({ sam, dn });
+      if (uac & 0x20) {
+        passwordIssues.notRequired.push({ sam, dn });
+        findings.critical.push({ type: 'PASSWORD_NOT_REQUIRED', sam, dn });
+      }
+      if (uac & 0x80) {
+        passwordIssues.reversibleEncryption.push({ sam, dn });
+        findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', sam, dn });
+      }
+      if (uac & 0x40) passwordIssues.cannotChange.push({ sam, dn });
+
+      const pwdLastSet = fileTimeToDate(user.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
+      if (pwdLastSet) {
+        const pwdAge = Math.floor((now - pwdLastSet.getTime()) / (24 * 60 * 60 * 1000));
+        if (pwdAge > maxPwdAge && !(uac & 0x10000) && !(uac & 0x2)) {
+          passwordIssues.expired.push({ sam, dn, daysExpired: pwdAge - maxPwdAge });
+        }
+        if (pwdAge > veryOldThreshold) {
+          passwordIssues.veryOld.push({ sam, dn, daysOld: pwdAge });
+          findings.medium.push({ type: 'PASSWORD_VERY_OLD', sam, daysOld: pwdAge });
+        }
+      }
+    }
+
+    trackStep('STEP_03_PASSWORD_SEC', 'Password security analysis', {
+      count: passwordIssues.neverExpires.length + passwordIssues.notRequired.length +
+             passwordIssues.reversibleEncryption.length + passwordIssues.expired.length,
+      findings: {
+        neverExpires: passwordIssues.neverExpires.length,
+        notRequired: passwordIssues.notRequired.length,
+        reversibleEncryption: passwordIssues.reversibleEncryption.length,
+        expired: passwordIssues.expired.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 04: Kerberos Security Analysis
+    const kerberosIssues = {
+      spnAccounts: [],
+      noPreauth: [],
+      unconstrainedDelegation: [],
+      constrainedDelegation: []
+    };
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+      const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+      const dn = user.objectName;
+      const spn = user.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
+
+      if (spn.length > 0) {
+        kerberosIssues.spnAccounts.push({ sam, dn, spnCount: spn.length, spns: spn });
+        findings.high.push({ type: 'KERBEROASTING_RISK', sam, spnCount: spn.length });
+      }
+
+      if (uac & 0x400000) {
+        kerberosIssues.noPreauth.push({ sam, dn });
+        findings.critical.push({ type: 'ASREP_ROASTING_RISK', sam, dn });
+      }
+
+      if (uac & 0x80000) {
+        kerberosIssues.unconstrainedDelegation.push({ sam, dn });
+        findings.critical.push({ type: 'UNCONSTRAINED_DELEGATION', sam, dn });
+      }
+
+      const allowedToDelegateTo = user.attributes.find(a => a.type === 'msDS-AllowedToDelegateTo')?.values || [];
+      if (allowedToDelegateTo.length > 0) {
+        kerberosIssues.constrainedDelegation.push({ sam, dn, delegateTo: allowedToDelegateTo });
+        findings.high.push({ type: 'CONSTRAINED_DELEGATION', sam, targetCount: allowedToDelegateTo.length });
+      }
+    }
+
+    trackStep('STEP_04_KERBEROS_SEC', 'Kerberos security analysis', {
+      count: kerberosIssues.spnAccounts.length + kerberosIssues.noPreauth.length +
+             kerberosIssues.unconstrainedDelegation.length,
+      findings: {
+        spnAccounts: kerberosIssues.spnAccounts.length,
+        noPreauth: kerberosIssues.noPreauth.length,
+        unconstrainedDelegation: kerberosIssues.unconstrainedDelegation.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 05: Account Status Analysis
+    const accountStatus = {
+      disabled: [],
+      locked: [],
+      expired: [],
+      neverLoggedOn: [],
+      inactive90: [],
+      inactive180: [],
+      inactive365: []
+    };
+
+    const inactivityThresholds = {
+      days90: 90 * 24 * 60 * 60 * 1000,
+      days180: 180 * 24 * 60 * 60 * 1000,
+      days365: 365 * 24 * 60 * 60 * 1000
+    };
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+      const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+      const dn = user.objectName;
+
+      if (uac & 0x2) {
+        accountStatus.disabled.push({ sam, dn });
+      }
+
+      const lockoutTime = user.attributes.find(a => a.type === 'lockoutTime')?.values[0];
+      if (lockoutTime && lockoutTime !== '0') {
+        accountStatus.locked.push({ sam, dn });
+      }
+
+      const accountExpires = user.attributes.find(a => a.type === 'accountExpires')?.values[0];
+      if (accountExpires && accountExpires !== '0' && accountExpires !== '9223372036854775807') {
+        const expiryDate = fileTimeToDate(accountExpires);
+        if (expiryDate && expiryDate.getTime() < now) {
+          accountStatus.expired.push({ sam, dn, expiryDate: formatDate(expiryDate) });
+        }
+      }
+
+      const lastLogon = user.attributes.find(a => a.type === 'lastLogonTimestamp')?.values[0];
+      if (!lastLogon || lastLogon === '0') {
+        const whenCreated = user.attributes.find(a => a.type === 'whenCreated')?.values[0];
+        accountStatus.neverLoggedOn.push({ sam, dn, created: whenCreated });
+      } else {
+        const lastLogonDate = fileTimeToDate(lastLogon);
+        if (lastLogonDate) {
+          const inactive = now - lastLogonDate.getTime();
+          const daysInactive = Math.floor(inactive / (24 * 60 * 60 * 1000));
+
+          if (inactive > inactivityThresholds.days365) {
+            accountStatus.inactive365.push({ sam, dn, daysInactive });
+            findings.medium.push({ type: 'INACTIVE_365_DAYS', sam, daysInactive });
+          } else if (inactive > inactivityThresholds.days180) {
+            accountStatus.inactive180.push({ sam, dn, daysInactive });
+          } else if (inactive > inactivityThresholds.days90) {
+            accountStatus.inactive90.push({ sam, dn, daysInactive });
+          }
+        }
+      }
+    }
+
+    trackStep('STEP_05_ACCOUNT_STATUS', 'Account status analysis', {
+      count: accountStatus.disabled.length + accountStatus.locked.length +
+             accountStatus.expired.length + accountStatus.neverLoggedOn.length,
+      findings: {
+        disabled: accountStatus.disabled.length,
+        locked: accountStatus.locked.length,
+        inactive365: accountStatus.inactive365.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 06: Privileged Accounts Analysis
+    const privilegedAccounts = {
+      domainAdmins: [],
+      enterpriseAdmins: [],
+      schemaAdmins: [],
+      administrators: [],
+      accountOperators: [],
+      backupOperators: [],
+      serverOperators: [],
+      printOperators: [],
+      remoteDesktopUsers: [],
+      gpCreatorOwners: [],
+      dnsAdmins: [],
+      adminCount: [],
+      protectedUsers: []
+    };
+
+    const privGroups = {
+      'Domain Admins': 'domainAdmins',
+      'Enterprise Admins': 'enterpriseAdmins',
+      'Schema Admins': 'schemaAdmins',
+      'Administrators': 'administrators',
+      'Account Operators': 'accountOperators',
+      'Backup Operators': 'backupOperators',
+      'Server Operators': 'serverOperators',
+      'Print Operators': 'printOperators',
+      'Remote Desktop Users': 'remoteDesktopUsers',
+      'Group Policy Creator Owners': 'gpCreatorOwners',
+      'DnsAdmins': 'dnsAdmins',
+      'Protected Users': 'protectedUsers'
+    };
+
+    for (const [groupName, key] of Object.entries(privGroups)) {
+      try {
+        const group = await searchOne(`(sAMAccountName=${escapeLdap(groupName)})`);
+        const members = group.attributes.find(a => a.type === 'member')?.values || [];
+        privilegedAccounts[key] = members.map(dn => ({ dn }));
+
+        if (['domainAdmins', 'enterpriseAdmins', 'schemaAdmins'].includes(key)) {
+          findings.info.push({ type: `PRIVILEGED_GROUP_${key.toUpperCase()}`, count: members.length });
+        }
+      } catch (e) {
+        // Group doesn't exist
+      }
+    }
+
+    for (const user of allUsers) {
+      const adminCount = user.attributes.find(a => a.type === 'adminCount')?.values[0];
+      if (adminCount === '1') {
+        const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0];
+        const dn = user.objectName;
+        privilegedAccounts.adminCount.push({ sam, dn });
+      }
+    }
+
+    trackStep('STEP_06_PRIVILEGED_ACCTS', 'Privileged accounts analysis', {
+      count: privilegedAccounts.domainAdmins.length + privilegedAccounts.enterpriseAdmins.length +
+             privilegedAccounts.administrators.length,
+      findings: {
+        domainAdmins: privilegedAccounts.domainAdmins.length,
+        enterpriseAdmins: privilegedAccounts.enterpriseAdmins.length,
+        adminCount: privilegedAccounts.adminCount.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 07: Service Accounts Detection
+    const serviceAccounts = {
+      detectedBySPN: [],
+      detectedByName: [],
+      detectedByDescription: []
+    };
+
+    const servicePatterns = /^(svc|service|sql|apache|nginx|iis|app|api|bot)/i;
+    const descPatterns = /(service|application|automated|api|bot)/i;
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
+      const desc = user.attributes.find(a => a.type === 'description')?.values[0] || '';
+      const spn = user.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
+      const dn = user.objectName;
+
+      if (spn.length > 0) {
+        serviceAccounts.detectedBySPN.push({ sam, dn, spnCount: spn.length });
+      } else if (servicePatterns.test(sam)) {
+        serviceAccounts.detectedByName.push({ sam, dn });
+      } else if (descPatterns.test(desc)) {
+        serviceAccounts.detectedByDescription.push({ sam, dn, description: desc });
+      }
+    }
+
+    trackStep('STEP_07_SERVICE_ACCTS', 'Service accounts detection', {
+      count: serviceAccounts.detectedBySPN.length + serviceAccounts.detectedByName.length,
+      findings: {
+        bySPN: serviceAccounts.detectedBySPN.length,
+        byName: serviceAccounts.detectedByName.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 08: Dangerous Patterns and Advanced Security Detection
+    const dangerousPatterns = {
+      passwordInDescription: [],
+      testAccounts: [],
+      sharedAccounts: [],
+      defaultAccounts: [],
+      unixUserPassword: [],
+      sidHistory: []
+    };
+
+    const advancedSecurity = {
+      lapsReadable: [],
+      dcsyncCapable: [],
+      protectedUsersBypass: [],
+      weakEncryption: [],
+      sensitiveDelegation: [],
+      gpoModifyRights: [],
+      dnsAdmins: [],
+      delegationPrivilege: [],
+      replicationRights: []
+    };
+
+    const pwdPatterns = /(password|passwd|pwd|motdepasse|mdp)[:=]\s*[\w!@#$%^&*()]+/i;
+    const testPatterns = /^(test|demo|temp|sample|example)/i;
+    const sharedPatterns = /^(shared|common|generic|team)/i;
+    const defaultNames = ['Administrator', 'Guest', 'krbtgt'];
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
+      const desc = user.attributes.find(a => a.type === 'description')?.values[0] || '';
+      const info = user.attributes.find(a => a.type === 'info')?.values[0] || '';
+      const dn = user.objectName;
+
+      if (pwdPatterns.test(desc) || pwdPatterns.test(info)) {
+        dangerousPatterns.passwordInDescription.push({ sam, dn, field: pwdPatterns.test(desc) ? 'description' : 'info' });
+        findings.critical.push({ type: 'PASSWORD_IN_DESCRIPTION', sam, dn });
+      }
+
+      if (testPatterns.test(sam)) {
+        dangerousPatterns.testAccounts.push({ sam, dn });
+        findings.low.push({ type: 'TEST_ACCOUNT', sam, dn });
+      }
+
+      if (sharedPatterns.test(sam)) {
+        dangerousPatterns.sharedAccounts.push({ sam, dn });
+        findings.medium.push({ type: 'SHARED_ACCOUNT', sam, dn });
+      }
+
+      if (defaultNames.includes(sam)) {
+        dangerousPatterns.defaultAccounts.push({ sam, dn });
+      }
+
+      const unixUserPassword = user.attributes.find(a => a.type === 'unixUserPassword')?.values[0];
+      if (unixUserPassword) {
+        dangerousPatterns.unixUserPassword.push({ sam, dn });
+        findings.critical.push({ type: 'UNIX_USER_PASSWORD', sam, dn });
+      }
+
+      const sidHistory = user.attributes.find(a => a.type === 'sIDHistory')?.values || [];
+      if (sidHistory.length > 0) {
+        dangerousPatterns.sidHistory.push({ sam, dn, sidCount: sidHistory.length });
+        findings.high.push({ type: 'SID_HISTORY', sam, sidCount: sidHistory.length });
+      }
+
+      // ADVANCED SECURITY CHECKS
+      const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+      const supportedEncTypes = user.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0];
+
+      if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
+        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'DES-only' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', sam, dn });
+      } else if (uac & 0x200000) {
+        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'USE_DES_KEY_ONLY' });
+        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', sam, dn });
+      }
+
+      const adminCount = user.attributes.find(a => a.type === 'adminCount')?.values[0];
+      const trustedForDelegation = uac & 0x80000;
+
+      if (adminCount === '1' && trustedForDelegation) {
+        advancedSecurity.sensitiveDelegation.push({ sam, dn, reason: 'Admin with unconstrained delegation' });
+        findings.critical.push({ type: 'SENSITIVE_DELEGATION', sam, dn });
+      }
+    }
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
+      const dn = user.objectName;
+      const lapsPassword = user.attributes.find(a => a.type === 'ms-Mcs-AdmPwd')?.values[0];
+
+      if (lapsPassword) {
+        advancedSecurity.lapsReadable.push({ sam, dn });
+        findings.info.push({ type: 'LAPS_PASSWORD_SET', sam, dn });
+      }
+    }
+
+    const dcsyncGroups = ['Domain Admins', 'Enterprise Admins', 'Administrators'];
+    for (const groupName of dcsyncGroups) {
+      try {
+        const group = await searchOne(`(sAMAccountName=${escapeLdap(groupName)})`);
+        const members = group.attributes.find(a => a.type === 'member')?.values || [];
+        for (const memberDn of members) {
+          const cnMatch = memberDn.match(/^CN=([^,]+)/);
+          if (cnMatch) {
+            const memberCn = cnMatch[1];
+            advancedSecurity.dcsyncCapable.push({ dn: memberDn, group: groupName });
+            findings.info.push({ type: 'DCSYNC_CAPABLE', member: memberCn, group: groupName });
+          }
+        }
+      } catch (e) {
+        // Group doesn't exist
+      }
+    }
+
+    const protectedUsersMembers = privilegedAccounts.protectedUsers.map(u => u.dn);
+    const highPrivilegeAccounts = [
+      ...privilegedAccounts.domainAdmins,
+      ...privilegedAccounts.enterpriseAdmins,
+      ...privilegedAccounts.schemaAdmins
+    ];
+
+    for (const account of highPrivilegeAccounts) {
+      if (!protectedUsersMembers.includes(account.dn)) {
+        advancedSecurity.protectedUsersBypass.push(account);
+        findings.medium.push({ type: 'NOT_IN_PROTECTED_USERS', dn: account.dn });
+      }
+    }
+
+    for (const member of privilegedAccounts.gpCreatorOwners) {
+      advancedSecurity.gpoModifyRights.push(member);
+      findings.high.push({ type: 'GPO_MODIFY_RIGHTS', dn: member.dn });
+    }
+
+    for (const member of privilegedAccounts.dnsAdmins) {
+      advancedSecurity.dnsAdmins.push(member);
+      findings.high.push({ type: 'DNS_ADMINS_MEMBER', dn: member.dn });
+    }
+
+    const standardAdminDns = [
+      ...privilegedAccounts.domainAdmins.map(a => a.dn),
+      ...privilegedAccounts.enterpriseAdmins.map(a => a.dn),
+      ...privilegedAccounts.administrators.map(a => a.dn)
+    ];
+
+    for (const account of privilegedAccounts.adminCount) {
+      if (!standardAdminDns.includes(account.dn)) {
+        advancedSecurity.replicationRights.push(account);
+        findings.high.push({ type: 'REPLICATION_RIGHTS', dn: account.dn });
+      }
+    }
+
+    const delegationGroups = [
+      ...privilegedAccounts.accountOperators,
+      ...privilegedAccounts.serverOperators
+    ];
+
+    for (const account of delegationGroups) {
+      advancedSecurity.delegationPrivilege.push(account);
+      findings.medium.push({ type: 'DELEGATION_PRIVILEGE', dn: account.dn });
+    }
+
+    trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
+      count: dangerousPatterns.passwordInDescription.length + dangerousPatterns.testAccounts.length,
+      findings: {
+        passwordInDesc: dangerousPatterns.passwordInDescription.length,
+        testAccounts: dangerousPatterns.testAccounts.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 09: Temporal Analysis
+    const temporalAnalysis = {
+      created7days: [],
+      created30days: [],
+      created90days: [],
+      modified7days: [],
+      modified30days: []
+    };
+
+    const timeThresholds = {
+      days7: 7 * 24 * 60 * 60 * 1000,
+      days30: 30 * 24 * 60 * 60 * 1000,
+      days90: 90 * 24 * 60 * 60 * 1000
+    };
+
+    for (const user of allUsers) {
+      const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0];
+      const whenCreatedStr = user.attributes.find(a => a.type === 'whenCreated')?.values[0];
+      const whenChangedStr = user.attributes.find(a => a.type === 'whenChanged')?.values[0];
+      const dn = user.objectName;
+
+      if (whenCreatedStr) {
+        const created = new Date(whenCreatedStr).getTime();
+        const age = now - created;
+
+        if (age < timeThresholds.days7) {
+          temporalAnalysis.created7days.push({ sam, dn, created: whenCreatedStr });
+        } else if (age < timeThresholds.days30) {
+          temporalAnalysis.created30days.push({ sam, dn, created: whenCreatedStr });
+        } else if (age < timeThresholds.days90) {
+          temporalAnalysis.created90days.push({ sam, dn, created: whenCreatedStr });
+        }
+      }
+
+      if (whenChangedStr) {
+        const changed = new Date(whenChangedStr).getTime();
+        const age = now - changed;
+
+        if (age < timeThresholds.days7) {
+          temporalAnalysis.modified7days.push({ sam, dn, modified: whenChangedStr });
+        } else if (age < timeThresholds.days30) {
+          temporalAnalysis.modified30days.push({ sam, dn, modified: whenChangedStr });
+        }
+      }
+    }
+
+    trackStep('STEP_09_TEMPORAL_ANALYSIS', 'Temporal analysis', {
+      count: temporalAnalysis.created7days.length + temporalAnalysis.created30days.length,
+      findings: {
+        created7days: temporalAnalysis.created7days.length,
+        modified7days: temporalAnalysis.modified7days.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 10: Group Analysis
+    const allGroups = await searchMany('(objectClass=group)', ['*'], 10000);
+    trackStep('STEP_10_GROUP_ENUM', 'Group enumeration', { count: allGroups.length });
+    stepStart = Date.now();
+
+    const groupAnalysis = {
+      emptyGroups: [],
+      oversizedGroups: [],
+      recentlyModified: []
+    };
+
+    for (const group of allGroups) {
+      const sam = group.attributes.find(a => a.type === 'sAMAccountName')?.values[0];
+      const members = group.attributes.find(a => a.type === 'member')?.values || [];
+      const whenChanged = group.attributes.find(a => a.type === 'whenChanged')?.values[0];
+      const dn = group.objectName;
+
+      if (members.length === 0) {
+        groupAnalysis.emptyGroups.push({ sam, dn });
+      }
+
+      if (members.length > 1000) {
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
+        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, memberCount: members.length });
+      } else if (members.length > 500) {
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, memberCount: members.length });
+      } else if (members.length > 100) {
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', sam, memberCount: members.length });
+      }
+
+      if (whenChanged) {
+        const changedDate = new Date(whenChanged).getTime();
+        if (now - changedDate < timeThresholds.days7) {
+          groupAnalysis.recentlyModified.push({ sam, dn, modified: whenChanged });
+        }
+      }
+    }
+
+    trackStep('STEP_11_GROUP_ANALYSIS', 'Group analysis', {
+      count: groupAnalysis.emptyGroups.length + groupAnalysis.oversizedGroups.length,
+      findings: {
+        emptyGroups: groupAnalysis.emptyGroups.length,
+        oversizedGroups: groupAnalysis.oversizedGroups.length
+      }
+    });
+    stepStart = Date.now();
+
+    // STEP 12: Computer Analysis (if requested)
+    let computerAnalysis = null;
+    if (includeComputers) {
+      const allComputers = await searchMany('(objectClass=computer)', ['*'], 10000);
+      computerAnalysis = {
+        total: allComputers.length,
+        enabled: 0,
+        disabled: 0,
+        inactive90: [],
+        inactive180: [],
+        servers: [],
+        workstations: [],
+        domainControllers: []
+      };
+
+      for (const computer of allComputers) {
+        const name = computer.attributes.find(a => a.type === 'name')?.values[0];
+        const uac = parseInt(computer.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const os = computer.attributes.find(a => a.type === 'operatingSystem')?.values[0] || '';
+        const lastLogon = fileTimeToDate(computer.attributes.find(a => a.type === 'lastLogonTimestamp')?.values[0]);
+        const dn = computer.objectName;
+
+        if (uac & 0x2) {
+          computerAnalysis.disabled++;
+        } else {
+          computerAnalysis.enabled++;
+        }
+
+        if (lastLogon) {
+          const inactive = now - lastLogon.getTime();
+          const daysInactive = Math.floor(inactive / (24 * 60 * 60 * 1000));
+
+          if (inactive > inactivityThresholds.days180) {
+            computerAnalysis.inactive180.push({ name, dn, daysInactive });
+          } else if (inactive > inactivityThresholds.days90) {
+            computerAnalysis.inactive90.push({ name, dn, daysInactive });
+          }
+        }
+
+        if (uac & 0x2000) {
+          computerAnalysis.domainControllers.push({ name, dn, os });
+        } else if (os.toLowerCase().includes('server')) {
+          computerAnalysis.servers.push({ name, dn, os });
+        } else {
+          computerAnalysis.workstations.push({ name, dn, os });
+        }
+      }
+
+      trackStep('STEP_12_COMPUTER_ANALYSIS', 'Computer analysis', {
+        count: allComputers.length,
+        findings: {
+          enabled: computerAnalysis.enabled,
+          disabled: computerAnalysis.disabled,
+          inactive90: computerAnalysis.inactive90.length
+        }
+      });
+      stepStart = Date.now();
+    }
+
+    // STEP 13: OU Analysis
+    const allOUs = await searchMany('(objectClass=organizationalUnit)', ['*'], 10000);
+    const ouAnalysis = {
+      total: allOUs.length,
+      distribution: {}
+    };
+
+    trackStep('STEP_13_OU_ANALYSIS', 'OU analysis', { count: allOUs.length });
+    stepStart = Date.now();
+
+    // STEP 14: Risk Scoring
+    const riskScore = {
+      critical: findings.critical.length,
+      high: findings.high.length,
+      medium: findings.medium.length,
+      low: findings.low.length,
+      total: findings.critical.length + findings.high.length + findings.medium.length + findings.low.length,
+      score: 0
+    };
+
+    const weightedRiskPoints = (findings.critical.length * 15) + (findings.high.length * 8) +
+                                (findings.medium.length * 2) + (findings.low.length * 1);
+    const maxRiskPoints = allUsers.length * 2.5;
+    const percentageDeduction = Math.floor((weightedRiskPoints / maxRiskPoints) * 100);
+    const directPenalty = Math.floor((findings.critical.length * 0.3) + (findings.high.length * 0.1));
+    riskScore.score = Math.max(0, Math.min(100, 100 - percentageDeduction - directPenalty));
+
+    trackStep('STEP_14_RISK_SCORING', 'Risk scoring calculation', {
+      count: riskScore.total,
+      findings: {
+        critical: riskScore.critical,
+        high: riskScore.high,
+        score: riskScore.score
+      }
+    });
+
+    trackStep('STEP_15_COMPLETED', 'Audit completed', { count: 1 });
+
+    // Calculate final response
+    const totalDuration = ((Date.now() - auditStart) / 1000).toFixed(2);
+
+    const finalResponse = {
+      success: true,
+      audit: {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          duration: `${totalDuration}s`,
+          includeDetails,
+          includeComputers
+        },
+        progress,
+        summary: {
+          users: allUsers.length,
+          groups: allGroups.length,
+          ous: allOUs.length,
+          computers: computerAnalysis ? computerAnalysis.total : 0
+        },
+        riskScore,
+        findings: includeDetails ? findings : {
+          critical: findings.critical.length,
+          high: findings.high.length,
+          medium: findings.medium.length,
+          low: findings.low.length,
+          total: riskScore.total
+        },
+        passwordSecurity: {
+          neverExpires: includeDetails ? passwordIssues.neverExpires : passwordIssues.neverExpires.length,
+          notRequired: includeDetails ? passwordIssues.notRequired : passwordIssues.notRequired.length,
+          reversibleEncryption: includeDetails ? passwordIssues.reversibleEncryption : passwordIssues.reversibleEncryption.length,
+          expired: includeDetails ? passwordIssues.expired : passwordIssues.expired.length,
+          veryOld: includeDetails ? passwordIssues.veryOld : passwordIssues.veryOld.length,
+          cannotChange: includeDetails ? passwordIssues.cannotChange : passwordIssues.cannotChange.length
+        },
+        kerberosSecurity: {
+          spnAccounts: includeDetails ? kerberosIssues.spnAccounts : kerberosIssues.spnAccounts.length,
+          noPreauth: includeDetails ? kerberosIssues.noPreauth : kerberosIssues.noPreauth.length,
+          unconstrainedDelegation: includeDetails ? kerberosIssues.unconstrainedDelegation : kerberosIssues.unconstrainedDelegation.length,
+          constrainedDelegation: includeDetails ? kerberosIssues.constrainedDelegation : kerberosIssues.constrainedDelegation.length
+        },
+        accountStatus: {
+          disabled: includeDetails ? accountStatus.disabled : accountStatus.disabled.length,
+          locked: includeDetails ? accountStatus.locked : accountStatus.locked.length,
+          expired: includeDetails ? accountStatus.expired : accountStatus.expired.length,
+          neverLoggedOn: includeDetails ? accountStatus.neverLoggedOn : accountStatus.neverLoggedOn.length,
+          inactive90: includeDetails ? accountStatus.inactive90 : accountStatus.inactive90.length,
+          inactive180: includeDetails ? accountStatus.inactive180 : accountStatus.inactive180.length,
+          inactive365: includeDetails ? accountStatus.inactive365 : accountStatus.inactive365.length
+        },
+        privilegedAccounts: {
+          domainAdmins: includeDetails ? privilegedAccounts.domainAdmins : privilegedAccounts.domainAdmins.length,
+          enterpriseAdmins: includeDetails ? privilegedAccounts.enterpriseAdmins : privilegedAccounts.enterpriseAdmins.length,
+          schemaAdmins: includeDetails ? privilegedAccounts.schemaAdmins : privilegedAccounts.schemaAdmins.length,
+          administrators: includeDetails ? privilegedAccounts.administrators : privilegedAccounts.administrators.length,
+          accountOperators: includeDetails ? privilegedAccounts.accountOperators : privilegedAccounts.accountOperators.length,
+          backupOperators: includeDetails ? privilegedAccounts.backupOperators : privilegedAccounts.backupOperators.length,
+          serverOperators: includeDetails ? privilegedAccounts.serverOperators : privilegedAccounts.serverOperators.length,
+          printOperators: includeDetails ? privilegedAccounts.printOperators : privilegedAccounts.printOperators.length,
+          remoteDesktopUsers: includeDetails ? privilegedAccounts.remoteDesktopUsers : privilegedAccounts.remoteDesktopUsers.length,
+          gpCreatorOwners: includeDetails ? privilegedAccounts.gpCreatorOwners : privilegedAccounts.gpCreatorOwners.length,
+          dnsAdmins: includeDetails ? privilegedAccounts.dnsAdmins : privilegedAccounts.dnsAdmins.length,
+          adminCount: includeDetails ? privilegedAccounts.adminCount : privilegedAccounts.adminCount.length,
+          protectedUsers: includeDetails ? privilegedAccounts.protectedUsers : privilegedAccounts.protectedUsers.length
+        },
+        serviceAccounts: {
+          detectedBySPN: includeDetails ? serviceAccounts.detectedBySPN : serviceAccounts.detectedBySPN.length,
+          detectedByName: includeDetails ? serviceAccounts.detectedByName : serviceAccounts.detectedByName.length,
+          detectedByDescription: includeDetails ? serviceAccounts.detectedByDescription : serviceAccounts.detectedByDescription.length
+        },
+        dangerousPatterns: {
+          passwordInDescription: includeDetails ? dangerousPatterns.passwordInDescription : dangerousPatterns.passwordInDescription.length,
+          testAccounts: includeDetails ? dangerousPatterns.testAccounts : dangerousPatterns.testAccounts.length,
+          sharedAccounts: includeDetails ? dangerousPatterns.sharedAccounts : dangerousPatterns.sharedAccounts.length,
+          defaultAccounts: includeDetails ? dangerousPatterns.defaultAccounts : dangerousPatterns.defaultAccounts.length,
+          unixUserPassword: includeDetails ? dangerousPatterns.unixUserPassword : dangerousPatterns.unixUserPassword.length,
+          sidHistory: includeDetails ? dangerousPatterns.sidHistory : dangerousPatterns.sidHistory.length
+        },
+        advancedSecurity: {
+          lapsReadable: includeDetails ? advancedSecurity.lapsReadable : advancedSecurity.lapsReadable.length,
+          dcsyncCapable: includeDetails ? advancedSecurity.dcsyncCapable : advancedSecurity.dcsyncCapable.length,
+          protectedUsersBypass: includeDetails ? advancedSecurity.protectedUsersBypass : advancedSecurity.protectedUsersBypass.length,
+          weakEncryption: includeDetails ? advancedSecurity.weakEncryption : advancedSecurity.weakEncryption.length,
+          sensitiveDelegation: includeDetails ? advancedSecurity.sensitiveDelegation : advancedSecurity.sensitiveDelegation.length,
+          gpoModifyRights: includeDetails ? advancedSecurity.gpoModifyRights : advancedSecurity.gpoModifyRights.length,
+          dnsAdmins: includeDetails ? advancedSecurity.dnsAdmins : advancedSecurity.dnsAdmins.length,
+          delegationPrivilege: includeDetails ? advancedSecurity.delegationPrivilege : advancedSecurity.delegationPrivilege.length,
+          replicationRights: includeDetails ? advancedSecurity.replicationRights : advancedSecurity.replicationRights.length
+        },
+        temporalAnalysis: {
+          created7days: includeDetails ? temporalAnalysis.created7days : temporalAnalysis.created7days.length,
+          created30days: includeDetails ? temporalAnalysis.created30days : temporalAnalysis.created30days.length,
+          created90days: includeDetails ? temporalAnalysis.created90days : temporalAnalysis.created90days.length,
+          modified7days: includeDetails ? temporalAnalysis.modified7days : temporalAnalysis.modified7days.length,
+          modified30days: includeDetails ? temporalAnalysis.modified30days : temporalAnalysis.modified30days.length
+        },
+        groupAnalysis: {
+          emptyGroups: includeDetails ? groupAnalysis.emptyGroups : groupAnalysis.emptyGroups.length,
+          oversizedGroups: includeDetails ? groupAnalysis.oversizedGroups : groupAnalysis.oversizedGroups.length,
+          recentlyModified: includeDetails ? groupAnalysis.recentlyModified : groupAnalysis.recentlyModified.length
+        }
+      }
+    };
+
+    if (computerAnalysis) {
+      finalResponse.audit.computerAnalysis = {
+        total: computerAnalysis.total,
+        enabled: computerAnalysis.enabled,
+        disabled: computerAnalysis.disabled,
+        inactive90: includeDetails ? computerAnalysis.inactive90 : computerAnalysis.inactive90.length,
+        inactive180: includeDetails ? computerAnalysis.inactive180 : computerAnalysis.inactive180.length,
+        servers: includeDetails ? computerAnalysis.servers : computerAnalysis.servers.length,
+        workstations: includeDetails ? computerAnalysis.workstations : computerAnalysis.workstations.length,
+        domainControllers: includeDetails ? computerAnalysis.domainControllers : computerAnalysis.domainControllers.length
+      };
+    }
+
+    // Send final result
+    sendEvent('complete', finalResponse);
+
+    // Close connection
+    res.end();
+
+  } catch (error) {
+    res.write(`event: error\n`);
+    res.write(`data: ${JSON.stringify({ success: false, error: error.message })}\n\n`);
+    res.end();
   }
 });
 
