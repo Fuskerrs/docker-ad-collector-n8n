@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.3');
+console.log('AD Collector for n8n - v1.7.4');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -290,7 +290,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.3' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.4' });
 });
 
 // Test LDAP connection
@@ -1282,19 +1282,42 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // ADVANCED SECURITY CHECKS
 
-      // Weak Kerberos encryption (DES-only, RC4-only)
+      // Weak Kerberos encryption detection
+      // msDS-SupportedEncryptionTypes flags:
+      // 0x1 = DES_CBC_CRC, 0x2 = DES_CBC_MD5, 0x4 = RC4_HMAC_MD5
+      // 0x8 = AES128_CTS_HMAC_SHA1_96, 0x10 = AES256_CTS_HMAC_SHA1_96
       const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
       const supportedEncTypes = user.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0];
 
-      // DES only (0x2 = DES_CBC_CRC, 0x4 = DES_CBC_MD5)
-      if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
-        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'DES-only' });
-        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user) });
+      if (supportedEncTypes) {
+        const encTypes = parseInt(supportedEncTypes);
+        const hasDES = encTypes & 0x3;    // DES_CBC_CRC or DES_CBC_MD5
+        const hasRC4 = encTypes & 0x4;    // RC4_HMAC_MD5
+        const hasAES = encTypes & 0x18;   // AES128 or AES256
+
+        // Critical: DES enabled (extremely weak, crackable in hours)
+        if (hasDES) {
+          const encList = [];
+          if (encTypes & 0x1) encList.push('DES-CBC-CRC');
+          if (encTypes & 0x2) encList.push('DES-CBC-MD5');
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: `DES enabled: ${encList.join(', ')}`, severity: 'critical' });
+          findings.critical.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user), algorithms: encList.join(', ') });
+        }
+        // High: RC4-only or no AES (RC4 has known weaknesses)
+        else if (hasRC4 && !hasAES) {
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'RC4-only (no AES)', severity: 'high' });
+          findings.high.push({ type: 'WEAK_ENCRYPTION_RC4', ...getUserDetails(user), algorithms: 'RC4-HMAC-MD5' });
+        }
+        // Medium: RC4 enabled alongside AES (not ideal but less critical)
+        else if (hasRC4 && hasAES) {
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'RC4 enabled (AES available)', severity: 'medium' });
+          findings.medium.push({ type: 'WEAK_ENCRYPTION_RC4_WITH_AES', ...getUserDetails(user), algorithms: 'RC4-HMAC-MD5' });
+        }
       }
-      // Use DES keys flag
-      else if (uac & 0x200000) {
-        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY' });
-        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
+      // Use DES keys flag in UAC
+      if (uac & 0x200000) {
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY flag set', severity: 'high' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
       }
 
       // Sensitive account with delegation enabled (not recommended)
@@ -2149,15 +2172,42 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
 
       // ADVANCED SECURITY CHECKS
+      // Weak Kerberos encryption detection
+      // msDS-SupportedEncryptionTypes flags:
+      // 0x1 = DES_CBC_CRC, 0x2 = DES_CBC_MD5, 0x4 = RC4_HMAC_MD5
+      // 0x8 = AES128_CTS_HMAC_SHA1_96, 0x10 = AES256_CTS_HMAC_SHA1_96
       const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
       const supportedEncTypes = user.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0];
 
-      if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
-        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'DES-only' });
-        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user) });
-      } else if (uac & 0x200000) {
-        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY' });
-        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
+      if (supportedEncTypes) {
+        const encTypes = parseInt(supportedEncTypes);
+        const hasDES = encTypes & 0x3;    // DES_CBC_CRC or DES_CBC_MD5
+        const hasRC4 = encTypes & 0x4;    // RC4_HMAC_MD5
+        const hasAES = encTypes & 0x18;   // AES128 or AES256
+
+        // Critical: DES enabled (extremely weak, crackable in hours)
+        if (hasDES) {
+          const encList = [];
+          if (encTypes & 0x1) encList.push('DES-CBC-CRC');
+          if (encTypes & 0x2) encList.push('DES-CBC-MD5');
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: `DES enabled: ${encList.join(', ')}`, severity: 'critical' });
+          findings.critical.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user), algorithms: encList.join(', ') });
+        }
+        // High: RC4-only or no AES (RC4 has known weaknesses)
+        else if (hasRC4 && !hasAES) {
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'RC4-only (no AES)', severity: 'high' });
+          findings.high.push({ type: 'WEAK_ENCRYPTION_RC4', ...getUserDetails(user), algorithms: 'RC4-HMAC-MD5' });
+        }
+        // Medium: RC4 enabled alongside AES (not ideal but less critical)
+        else if (hasRC4 && hasAES) {
+          advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'RC4 enabled (AES available)', severity: 'medium' });
+          findings.medium.push({ type: 'WEAK_ENCRYPTION_RC4_WITH_AES', ...getUserDetails(user), algorithms: 'RC4-HMAC-MD5' });
+        }
+      }
+      // Use DES keys flag in UAC
+      if (uac & 0x200000) {
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY flag set', severity: 'high' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
       }
 
       const adminCount = user.attributes.find(a => a.type === 'adminCount')?.values[0];
