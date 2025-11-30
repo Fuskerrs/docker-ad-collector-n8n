@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.2');
+console.log('AD Collector for n8n - v1.7.3');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -290,7 +290,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.2' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.3' });
 });
 
 // Test LDAP connection
@@ -1480,26 +1480,26 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // Empty groups
       if (members.length === 0) {
-        groupAnalysis.emptyGroups.push(getUserDetails(user));
+        groupAnalysis.emptyGroups.push({ sam, dn });
       }
 
       // Oversized groups (>100 members = info, >500 = high, >1000 = critical)
       if (members.length > 1000) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'critical' });
-        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
+        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, dn, memberCount: members.length });
       } else if (members.length > 500) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'high' });
-        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, dn, memberCount: members.length });
       } else if (members.length > 100) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'info' });
-        findings.info.push({ type: 'OVERSIZED_GROUP', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', sam, dn, memberCount: members.length });
       }
 
       // Recently modified (7 days)
       if (whenChanged) {
         const changedDate = new Date(whenChanged).getTime();
         if (now - changedDate < timeThresholds.days7) {
-          groupAnalysis.recentlyModified.push({ ...getUserDetails(user), modified: whenChanged });
+          groupAnalysis.recentlyModified.push({ sam, dn, modified: whenChanged });
         }
       }
     }
@@ -2327,24 +2327,24 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const dn = group.objectName;
 
       if (members.length === 0) {
-        groupAnalysis.emptyGroups.push(getUserDetails(user));
+        groupAnalysis.emptyGroups.push({ sam, dn });
       }
 
       if (members.length > 1000) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'critical' });
-        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
+        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, dn, memberCount: members.length });
       } else if (members.length > 500) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'high' });
-        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, dn, memberCount: members.length });
       } else if (members.length > 100) {
-        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'info' });
-        findings.info.push({ type: 'OVERSIZED_GROUP', ...getUserDetails(user), memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', sam, dn, memberCount: members.length });
       }
 
       if (whenChanged) {
         const changedDate = new Date(whenChanged).getTime();
         if (now - changedDate < timeThresholds.days7) {
-          groupAnalysis.recentlyModified.push({ ...getUserDetails(user), modified: whenChanged });
+          groupAnalysis.recentlyModified.push({ sam, dn, modified: whenChanged });
         }
       }
     }
