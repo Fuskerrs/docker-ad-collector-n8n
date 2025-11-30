@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.1');
+console.log('AD Collector for n8n - v1.7.2');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -252,9 +252,45 @@ function formatDate(date) {
   return date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 }
 
+// Helper to extract detailed user attributes for audit results
+function getUserDetails(user) {
+  const attrs = user.attributes || [];
+  const getValue = (type) => attrs.find(a => a.type === type)?.values[0] || null;
+
+  const sam = getValue('sAMAccountName') || 'Unknown';
+  const dn = user.objectName;
+
+  // Extract all security-relevant attributes
+  const details = {
+    sam,
+    dn,
+    // HIGH PRIORITY - Security critical
+    displayName: getValue('displayName'),
+    title: getValue('title'),
+    department: getValue('department'),
+    manager: getValue('manager'),
+    whenCreated: getValue('whenCreated'),
+    lastLogonTimestamp: getValue('lastLogonTimestamp'),
+    lastLogon: getValue('lastLogon'),
+    pwdLastSet: getValue('pwdLastSet'),
+    adminCount: getValue('adminCount'),
+    // MEDIUM PRIORITY - Identification/Contact
+    mail: getValue('mail'),
+    userPrincipalName: getValue('userPrincipalName'),
+    description: getValue('description'),
+    // OPTIONAL - Additional context
+    telephoneNumber: getValue('telephoneNumber'),
+    company: getValue('company'),
+    employeeID: getValue('employeeID')
+  };
+
+  // Remove null values to reduce payload size
+  return Object.fromEntries(Object.entries(details).filter(([_, v]) => v !== null));
+}
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.1' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.2' });
 });
 
 // Test LDAP connection
@@ -894,24 +930,24 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // Password never expires
       if (uac & 0x10000) {
-        passwordIssues.neverExpires.push({ sam, dn });
+        passwordIssues.neverExpires.push(getUserDetails(user));
       }
 
       // Password not required
       if (uac & 0x20) {
-        passwordIssues.notRequired.push({ sam, dn });
-        findings.critical.push({ type: 'PASSWORD_NOT_REQUIRED', sam, dn });
+        passwordIssues.notRequired.push(getUserDetails(user));
+        findings.critical.push({ type: 'PASSWORD_NOT_REQUIRED', ...getUserDetails(user) });
       }
 
       // Reversible encryption
       if (uac & 0x80) {
-        passwordIssues.reversibleEncryption.push({ sam, dn });
-        findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', sam, dn });
+        passwordIssues.reversibleEncryption.push(getUserDetails(user));
+        findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', ...getUserDetails(user) });
       }
 
       // Cannot change password
       if (uac & 0x40) {
-        passwordIssues.cannotChange.push({ sam, dn });
+        passwordIssues.cannotChange.push(getUserDetails(user));
       }
 
       // Check password age
@@ -921,13 +957,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
         // Expired password
         if (pwdAge > maxPwdAge && !(uac & 0x10000) && !(uac & 0x2)) {
-          passwordIssues.expired.push({ sam, dn, daysExpired: pwdAge - maxPwdAge });
+          passwordIssues.expired.push({ ...getUserDetails(user), daysExpired: pwdAge - maxPwdAge });
         }
 
         // Very old password (>1 year)
         if (pwdAge > veryOldThreshold) {
-          passwordIssues.veryOld.push({ sam, dn, daysOld: pwdAge });
-          findings.medium.push({ type: 'PASSWORD_VERY_OLD', sam, daysOld: pwdAge });
+          passwordIssues.veryOld.push({ ...getUserDetails(user), daysOld: pwdAge });
+          findings.medium.push({ type: 'PASSWORD_VERY_OLD', ...getUserDetails(user), daysOld: pwdAge });
         }
       }
     }
@@ -960,27 +996,27 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // SPN accounts (Kerberoasting risk)
       if (spn.length > 0) {
-        kerberosIssues.spnAccounts.push({ sam, dn, spnCount: spn.length, spns: spn });
-        findings.high.push({ type: 'KERBEROASTING_RISK', sam, spnCount: spn.length });
+        kerberosIssues.spnAccounts.push({ ...getUserDetails(user), spnCount: spn.length, spns: spn });
+        findings.high.push({ type: 'KERBEROASTING_RISK', ...getUserDetails(user), spnCount: spn.length });
       }
 
       // No Kerberos preauth (AS-REP roasting risk)
       if (uac & 0x400000) {
-        kerberosIssues.noPreauth.push({ sam, dn });
-        findings.critical.push({ type: 'ASREP_ROASTING_RISK', sam, dn });
+        kerberosIssues.noPreauth.push(getUserDetails(user));
+        findings.critical.push({ type: 'ASREP_ROASTING_RISK', ...getUserDetails(user) });
       }
 
       // Unconstrained delegation (very dangerous!)
       if (uac & 0x80000) {
-        kerberosIssues.unconstrainedDelegation.push({ sam, dn });
-        findings.critical.push({ type: 'UNCONSTRAINED_DELEGATION', sam, dn });
+        kerberosIssues.unconstrainedDelegation.push(getUserDetails(user));
+        findings.critical.push({ type: 'UNCONSTRAINED_DELEGATION', ...getUserDetails(user) });
       }
 
       // Constrained delegation
       const allowedToDelegateTo = user.attributes.find(a => a.type === 'msDS-AllowedToDelegateTo')?.values || [];
       if (allowedToDelegateTo.length > 0) {
-        kerberosIssues.constrainedDelegation.push({ sam, dn, delegateTo: allowedToDelegateTo });
-        findings.high.push({ type: 'CONSTRAINED_DELEGATION', sam, targetCount: allowedToDelegateTo.length });
+        kerberosIssues.constrainedDelegation.push({ ...getUserDetails(user), delegateTo: allowedToDelegateTo });
+        findings.high.push({ type: 'CONSTRAINED_DELEGATION', ...getUserDetails(user), targetCount: allowedToDelegateTo.length });
       }
     }
 
@@ -1019,13 +1055,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // Disabled
       if (uac & 0x2) {
-        accountStatus.disabled.push({ sam, dn });
+        accountStatus.disabled.push(getUserDetails(user));
       }
 
       // Locked
       const lockoutTime = user.attributes.find(a => a.type === 'lockoutTime')?.values[0];
       if (lockoutTime && lockoutTime !== '0') {
-        accountStatus.locked.push({ sam, dn });
+        accountStatus.locked.push(getUserDetails(user));
       }
 
       // Expired account
@@ -1033,7 +1069,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       if (accountExpires && accountExpires !== '0' && accountExpires !== '9223372036854775807') {
         const expiryDate = fileTimeToDate(accountExpires);
         if (expiryDate && expiryDate.getTime() < now) {
-          accountStatus.expired.push({ sam, dn, expiryDate: formatDate(expiryDate) });
+          accountStatus.expired.push({ ...getUserDetails(user), expiryDate: formatDate(expiryDate) });
         }
       }
 
@@ -1041,7 +1077,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const lastLogon = user.attributes.find(a => a.type === 'lastLogonTimestamp')?.values[0];
       if (!lastLogon || lastLogon === '0') {
         const whenCreated = user.attributes.find(a => a.type === 'whenCreated')?.values[0];
-        accountStatus.neverLoggedOn.push({ sam, dn, created: whenCreated });
+        accountStatus.neverLoggedOn.push({ ...getUserDetails(user), created: whenCreated });
       } else {
         // Inactive accounts
         const lastLogonDate = fileTimeToDate(lastLogon);
@@ -1050,12 +1086,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
           const daysInactive = Math.floor(inactive / (24 * 60 * 60 * 1000));
 
           if (inactive > inactivityThresholds.days365) {
-            accountStatus.inactive365.push({ sam, dn, daysInactive });
-            findings.medium.push({ type: 'INACTIVE_365_DAYS', sam, daysInactive });
+            accountStatus.inactive365.push({ ...getUserDetails(user), daysInactive });
+            findings.medium.push({ type: 'INACTIVE_365_DAYS', ...getUserDetails(user), daysInactive });
           } else if (inactive > inactivityThresholds.days180) {
-            accountStatus.inactive180.push({ sam, dn, daysInactive });
+            accountStatus.inactive180.push({ ...getUserDetails(user), daysInactive });
           } else if (inactive > inactivityThresholds.days90) {
-            accountStatus.inactive90.push({ sam, dn, daysInactive });
+            accountStatus.inactive90.push({ ...getUserDetails(user), daysInactive });
           }
         }
       }
@@ -1125,7 +1161,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       if (adminCount === '1') {
         const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0];
         const dn = user.objectName;
-        privilegedAccounts.adminCount.push({ sam, dn });
+        privilegedAccounts.adminCount.push(getUserDetails(user));
       }
     }
 
@@ -1157,11 +1193,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const dn = user.objectName;
 
       if (spn.length > 0) {
-        serviceAccounts.detectedBySPN.push({ sam, dn, spnCount: spn.length });
+        serviceAccounts.detectedBySPN.push({ ...getUserDetails(user), spnCount: spn.length });
       } else if (servicePatterns.test(sam)) {
-        serviceAccounts.detectedByName.push({ sam, dn });
+        serviceAccounts.detectedByName.push(getUserDetails(user));
       } else if (descPatterns.test(desc)) {
-        serviceAccounts.detectedByDescription.push({ sam, dn, description: desc });
+        serviceAccounts.detectedByDescription.push({ ...getUserDetails(user), description: desc });
       }
     }
 
@@ -1209,39 +1245,39 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // Password in description/info
       if (pwdPatterns.test(desc) || pwdPatterns.test(info)) {
-        dangerousPatterns.passwordInDescription.push({ sam, dn, field: pwdPatterns.test(desc) ? 'description' : 'info' });
-        findings.critical.push({ type: 'PASSWORD_IN_DESCRIPTION', sam, dn });
+        dangerousPatterns.passwordInDescription.push({ ...getUserDetails(user), field: pwdPatterns.test(desc) ? 'description' : 'info' });
+        findings.critical.push({ type: 'PASSWORD_IN_DESCRIPTION', ...getUserDetails(user) });
       }
 
       // Test/demo accounts
       if (testPatterns.test(sam)) {
-        dangerousPatterns.testAccounts.push({ sam, dn });
-        findings.low.push({ type: 'TEST_ACCOUNT', sam, dn });
+        dangerousPatterns.testAccounts.push(getUserDetails(user));
+        findings.low.push({ type: 'TEST_ACCOUNT', ...getUserDetails(user) });
       }
 
       // Shared accounts
       if (sharedPatterns.test(sam)) {
-        dangerousPatterns.sharedAccounts.push({ sam, dn });
-        findings.medium.push({ type: 'SHARED_ACCOUNT', sam, dn });
+        dangerousPatterns.sharedAccounts.push(getUserDetails(user));
+        findings.medium.push({ type: 'SHARED_ACCOUNT', ...getUserDetails(user) });
       }
 
       // Default accounts
       if (defaultNames.includes(sam)) {
-        dangerousPatterns.defaultAccounts.push({ sam, dn });
+        dangerousPatterns.defaultAccounts.push(getUserDetails(user));
       }
 
       // UnixUserPassword attribute (dangerous - stores Unix passwords)
       const unixUserPassword = user.attributes.find(a => a.type === 'unixUserPassword')?.values[0];
       if (unixUserPassword) {
-        dangerousPatterns.unixUserPassword.push({ sam, dn });
-        findings.critical.push({ type: 'UNIX_USER_PASSWORD', sam, dn });
+        dangerousPatterns.unixUserPassword.push(getUserDetails(user));
+        findings.critical.push({ type: 'UNIX_USER_PASSWORD', ...getUserDetails(user) });
       }
 
       // SID History (potential privilege escalation)
       const sidHistory = user.attributes.find(a => a.type === 'sIDHistory')?.values || [];
       if (sidHistory.length > 0) {
-        dangerousPatterns.sidHistory.push({ sam, dn, sidCount: sidHistory.length });
-        findings.high.push({ type: 'SID_HISTORY', sam, sidCount: sidHistory.length });
+        dangerousPatterns.sidHistory.push({ ...getUserDetails(user), sidCount: sidHistory.length });
+        findings.high.push({ type: 'SID_HISTORY', ...getUserDetails(user), sidCount: sidHistory.length });
       }
 
       // ADVANCED SECURITY CHECKS
@@ -1252,13 +1288,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // DES only (0x2 = DES_CBC_CRC, 0x4 = DES_CBC_MD5)
       if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
-        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'DES-only' });
-        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', sam, dn });
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'DES-only' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user) });
       }
       // Use DES keys flag
       else if (uac & 0x200000) {
-        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'USE_DES_KEY_ONLY' });
-        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', sam, dn });
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY' });
+        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
       }
 
       // Sensitive account with delegation enabled (not recommended)
@@ -1267,8 +1303,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const trustedToAuthForDelegation = user.attributes.find(a => a.type === 'userAccountControl')?.values[0];
 
       if (adminCount === '1' && trustedForDelegation) {
-        advancedSecurity.sensitiveDelegation.push({ sam, dn, reason: 'Admin with unconstrained delegation' });
-        findings.critical.push({ type: 'SENSITIVE_DELEGATION', sam, dn });
+        advancedSecurity.sensitiveDelegation.push({ ...getUserDetails(user), reason: 'Admin with unconstrained delegation' });
+        findings.critical.push({ type: 'SENSITIVE_DELEGATION', ...getUserDetails(user) });
       }
     }
 
@@ -1280,8 +1316,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const lapsPassword = user.attributes.find(a => a.type === 'ms-Mcs-AdmPwd')?.values[0];
 
       if (lapsPassword) {
-        advancedSecurity.lapsReadable.push({ sam, dn });
-        findings.info.push({ type: 'LAPS_PASSWORD_SET', sam, dn });
+        advancedSecurity.lapsReadable.push(getUserDetails(user));
+        findings.info.push({ type: 'LAPS_PASSWORD_SET', ...getUserDetails(user) });
       }
     }
 
@@ -1396,11 +1432,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
         const age = now - created;
 
         if (age < timeThresholds.days7) {
-          temporalAnalysis.created7days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created7days.push({ ...getUserDetails(user), created: whenCreatedStr });
         } else if (age < timeThresholds.days30) {
-          temporalAnalysis.created30days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created30days.push({ ...getUserDetails(user), created: whenCreatedStr });
         } else if (age < timeThresholds.days90) {
-          temporalAnalysis.created90days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created90days.push({ ...getUserDetails(user), created: whenCreatedStr });
         }
       }
 
@@ -1409,9 +1445,9 @@ app.post('/api/audit', authenticate, async (req, res) => {
         const age = now - changed;
 
         if (age < timeThresholds.days7) {
-          temporalAnalysis.modified7days.push({ sam, dn, modified: whenChangedStr });
+          temporalAnalysis.modified7days.push({ ...getUserDetails(user), modified: whenChangedStr });
         } else if (age < timeThresholds.days30) {
-          temporalAnalysis.modified30days.push({ sam, dn, modified: whenChangedStr });
+          temporalAnalysis.modified30days.push({ ...getUserDetails(user), modified: whenChangedStr });
         }
       }
     }
@@ -1444,26 +1480,26 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       // Empty groups
       if (members.length === 0) {
-        groupAnalysis.emptyGroups.push({ sam, dn });
+        groupAnalysis.emptyGroups.push(getUserDetails(user));
       }
 
       // Oversized groups (>100 members = info, >500 = high, >1000 = critical)
       if (members.length > 1000) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
-        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'critical' });
+        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', ...getUserDetails(user), memberCount: members.length });
       } else if (members.length > 500) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
-        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', ...getUserDetails(user), memberCount: members.length });
       } else if (members.length > 100) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
-        findings.info.push({ type: 'OVERSIZED_GROUP', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', ...getUserDetails(user), memberCount: members.length });
       }
 
       // Recently modified (7 days)
       if (whenChanged) {
         const changedDate = new Date(whenChanged).getTime();
         if (now - changedDate < timeThresholds.days7) {
-          groupAnalysis.recentlyModified.push({ sam, dn, modified: whenChanged });
+          groupAnalysis.recentlyModified.push({ ...getUserDetails(user), modified: whenChanged });
         }
       }
     }
@@ -1793,26 +1829,26 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
       const dn = user.objectName;
 
-      if (uac & 0x10000) passwordIssues.neverExpires.push({ sam, dn });
+      if (uac & 0x10000) passwordIssues.neverExpires.push(getUserDetails(user));
       if (uac & 0x20) {
-        passwordIssues.notRequired.push({ sam, dn });
-        findings.critical.push({ type: 'PASSWORD_NOT_REQUIRED', sam, dn });
+        passwordIssues.notRequired.push(getUserDetails(user));
+        findings.critical.push({ type: 'PASSWORD_NOT_REQUIRED', ...getUserDetails(user) });
       }
       if (uac & 0x80) {
-        passwordIssues.reversibleEncryption.push({ sam, dn });
-        findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', sam, dn });
+        passwordIssues.reversibleEncryption.push(getUserDetails(user));
+        findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', ...getUserDetails(user) });
       }
-      if (uac & 0x40) passwordIssues.cannotChange.push({ sam, dn });
+      if (uac & 0x40) passwordIssues.cannotChange.push(getUserDetails(user));
 
       const pwdLastSet = fileTimeToDate(user.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
       if (pwdLastSet) {
         const pwdAge = Math.floor((now - pwdLastSet.getTime()) / (24 * 60 * 60 * 1000));
         if (pwdAge > maxPwdAge && !(uac & 0x10000) && !(uac & 0x2)) {
-          passwordIssues.expired.push({ sam, dn, daysExpired: pwdAge - maxPwdAge });
+          passwordIssues.expired.push({ ...getUserDetails(user), daysExpired: pwdAge - maxPwdAge });
         }
         if (pwdAge > veryOldThreshold) {
-          passwordIssues.veryOld.push({ sam, dn, daysOld: pwdAge });
-          findings.medium.push({ type: 'PASSWORD_VERY_OLD', sam, daysOld: pwdAge });
+          passwordIssues.veryOld.push({ ...getUserDetails(user), daysOld: pwdAge });
+          findings.medium.push({ type: 'PASSWORD_VERY_OLD', ...getUserDetails(user), daysOld: pwdAge });
         }
       }
     }
@@ -1844,24 +1880,24 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const spn = user.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
 
       if (spn.length > 0) {
-        kerberosIssues.spnAccounts.push({ sam, dn, spnCount: spn.length, spns: spn });
-        findings.high.push({ type: 'KERBEROASTING_RISK', sam, spnCount: spn.length });
+        kerberosIssues.spnAccounts.push({ ...getUserDetails(user), spnCount: spn.length, spns: spn });
+        findings.high.push({ type: 'KERBEROASTING_RISK', ...getUserDetails(user), spnCount: spn.length });
       }
 
       if (uac & 0x400000) {
-        kerberosIssues.noPreauth.push({ sam, dn });
-        findings.critical.push({ type: 'ASREP_ROASTING_RISK', sam, dn });
+        kerberosIssues.noPreauth.push(getUserDetails(user));
+        findings.critical.push({ type: 'ASREP_ROASTING_RISK', ...getUserDetails(user) });
       }
 
       if (uac & 0x80000) {
-        kerberosIssues.unconstrainedDelegation.push({ sam, dn });
-        findings.critical.push({ type: 'UNCONSTRAINED_DELEGATION', sam, dn });
+        kerberosIssues.unconstrainedDelegation.push(getUserDetails(user));
+        findings.critical.push({ type: 'UNCONSTRAINED_DELEGATION', ...getUserDetails(user) });
       }
 
       const allowedToDelegateTo = user.attributes.find(a => a.type === 'msDS-AllowedToDelegateTo')?.values || [];
       if (allowedToDelegateTo.length > 0) {
-        kerberosIssues.constrainedDelegation.push({ sam, dn, delegateTo: allowedToDelegateTo });
-        findings.high.push({ type: 'CONSTRAINED_DELEGATION', sam, targetCount: allowedToDelegateTo.length });
+        kerberosIssues.constrainedDelegation.push({ ...getUserDetails(user), delegateTo: allowedToDelegateTo });
+        findings.high.push({ type: 'CONSTRAINED_DELEGATION', ...getUserDetails(user), targetCount: allowedToDelegateTo.length });
       }
     }
 
@@ -1899,26 +1935,26 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const dn = user.objectName;
 
       if (uac & 0x2) {
-        accountStatus.disabled.push({ sam, dn });
+        accountStatus.disabled.push(getUserDetails(user));
       }
 
       const lockoutTime = user.attributes.find(a => a.type === 'lockoutTime')?.values[0];
       if (lockoutTime && lockoutTime !== '0') {
-        accountStatus.locked.push({ sam, dn });
+        accountStatus.locked.push(getUserDetails(user));
       }
 
       const accountExpires = user.attributes.find(a => a.type === 'accountExpires')?.values[0];
       if (accountExpires && accountExpires !== '0' && accountExpires !== '9223372036854775807') {
         const expiryDate = fileTimeToDate(accountExpires);
         if (expiryDate && expiryDate.getTime() < now) {
-          accountStatus.expired.push({ sam, dn, expiryDate: formatDate(expiryDate) });
+          accountStatus.expired.push({ ...getUserDetails(user), expiryDate: formatDate(expiryDate) });
         }
       }
 
       const lastLogon = user.attributes.find(a => a.type === 'lastLogonTimestamp')?.values[0];
       if (!lastLogon || lastLogon === '0') {
         const whenCreated = user.attributes.find(a => a.type === 'whenCreated')?.values[0];
-        accountStatus.neverLoggedOn.push({ sam, dn, created: whenCreated });
+        accountStatus.neverLoggedOn.push({ ...getUserDetails(user), created: whenCreated });
       } else {
         const lastLogonDate = fileTimeToDate(lastLogon);
         if (lastLogonDate) {
@@ -1926,12 +1962,12 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           const daysInactive = Math.floor(inactive / (24 * 60 * 60 * 1000));
 
           if (inactive > inactivityThresholds.days365) {
-            accountStatus.inactive365.push({ sam, dn, daysInactive });
-            findings.medium.push({ type: 'INACTIVE_365_DAYS', sam, daysInactive });
+            accountStatus.inactive365.push({ ...getUserDetails(user), daysInactive });
+            findings.medium.push({ type: 'INACTIVE_365_DAYS', ...getUserDetails(user), daysInactive });
           } else if (inactive > inactivityThresholds.days180) {
-            accountStatus.inactive180.push({ sam, dn, daysInactive });
+            accountStatus.inactive180.push({ ...getUserDetails(user), daysInactive });
           } else if (inactive > inactivityThresholds.days90) {
-            accountStatus.inactive90.push({ sam, dn, daysInactive });
+            accountStatus.inactive90.push({ ...getUserDetails(user), daysInactive });
           }
         }
       }
@@ -1999,7 +2035,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       if (adminCount === '1') {
         const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0];
         const dn = user.objectName;
-        privilegedAccounts.adminCount.push({ sam, dn });
+        privilegedAccounts.adminCount.push(getUserDetails(user));
       }
     }
 
@@ -2031,11 +2067,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const dn = user.objectName;
 
       if (spn.length > 0) {
-        serviceAccounts.detectedBySPN.push({ sam, dn, spnCount: spn.length });
+        serviceAccounts.detectedBySPN.push({ ...getUserDetails(user), spnCount: spn.length });
       } else if (servicePatterns.test(sam)) {
-        serviceAccounts.detectedByName.push({ sam, dn });
+        serviceAccounts.detectedByName.push(getUserDetails(user));
       } else if (descPatterns.test(desc)) {
-        serviceAccounts.detectedByDescription.push({ sam, dn, description: desc });
+        serviceAccounts.detectedByDescription.push({ ...getUserDetails(user), description: desc });
       }
     }
 
@@ -2082,34 +2118,34 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const dn = user.objectName;
 
       if (pwdPatterns.test(desc) || pwdPatterns.test(info)) {
-        dangerousPatterns.passwordInDescription.push({ sam, dn, field: pwdPatterns.test(desc) ? 'description' : 'info' });
-        findings.critical.push({ type: 'PASSWORD_IN_DESCRIPTION', sam, dn });
+        dangerousPatterns.passwordInDescription.push({ ...getUserDetails(user), field: pwdPatterns.test(desc) ? 'description' : 'info' });
+        findings.critical.push({ type: 'PASSWORD_IN_DESCRIPTION', ...getUserDetails(user) });
       }
 
       if (testPatterns.test(sam)) {
-        dangerousPatterns.testAccounts.push({ sam, dn });
-        findings.low.push({ type: 'TEST_ACCOUNT', sam, dn });
+        dangerousPatterns.testAccounts.push(getUserDetails(user));
+        findings.low.push({ type: 'TEST_ACCOUNT', ...getUserDetails(user) });
       }
 
       if (sharedPatterns.test(sam)) {
-        dangerousPatterns.sharedAccounts.push({ sam, dn });
-        findings.medium.push({ type: 'SHARED_ACCOUNT', sam, dn });
+        dangerousPatterns.sharedAccounts.push(getUserDetails(user));
+        findings.medium.push({ type: 'SHARED_ACCOUNT', ...getUserDetails(user) });
       }
 
       if (defaultNames.includes(sam)) {
-        dangerousPatterns.defaultAccounts.push({ sam, dn });
+        dangerousPatterns.defaultAccounts.push(getUserDetails(user));
       }
 
       const unixUserPassword = user.attributes.find(a => a.type === 'unixUserPassword')?.values[0];
       if (unixUserPassword) {
-        dangerousPatterns.unixUserPassword.push({ sam, dn });
-        findings.critical.push({ type: 'UNIX_USER_PASSWORD', sam, dn });
+        dangerousPatterns.unixUserPassword.push(getUserDetails(user));
+        findings.critical.push({ type: 'UNIX_USER_PASSWORD', ...getUserDetails(user) });
       }
 
       const sidHistory = user.attributes.find(a => a.type === 'sIDHistory')?.values || [];
       if (sidHistory.length > 0) {
-        dangerousPatterns.sidHistory.push({ sam, dn, sidCount: sidHistory.length });
-        findings.high.push({ type: 'SID_HISTORY', sam, sidCount: sidHistory.length });
+        dangerousPatterns.sidHistory.push({ ...getUserDetails(user), sidCount: sidHistory.length });
+        findings.high.push({ type: 'SID_HISTORY', ...getUserDetails(user), sidCount: sidHistory.length });
       }
 
       // ADVANCED SECURITY CHECKS
@@ -2117,19 +2153,19 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const supportedEncTypes = user.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0];
 
       if (supportedEncTypes && (parseInt(supportedEncTypes) & 0x6) && !(parseInt(supportedEncTypes) & 0x18)) {
-        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'DES-only' });
-        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', sam, dn });
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'DES-only' });
+        findings.high.push({ type: 'WEAK_ENCRYPTION_DES', ...getUserDetails(user) });
       } else if (uac & 0x200000) {
-        advancedSecurity.weakEncryption.push({ sam, dn, reason: 'USE_DES_KEY_ONLY' });
-        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', sam, dn });
+        advancedSecurity.weakEncryption.push({ ...getUserDetails(user), reason: 'USE_DES_KEY_ONLY' });
+        findings.medium.push({ type: 'WEAK_ENCRYPTION_FLAG', ...getUserDetails(user) });
       }
 
       const adminCount = user.attributes.find(a => a.type === 'adminCount')?.values[0];
       const trustedForDelegation = uac & 0x80000;
 
       if (adminCount === '1' && trustedForDelegation) {
-        advancedSecurity.sensitiveDelegation.push({ sam, dn, reason: 'Admin with unconstrained delegation' });
-        findings.critical.push({ type: 'SENSITIVE_DELEGATION', sam, dn });
+        advancedSecurity.sensitiveDelegation.push({ ...getUserDetails(user), reason: 'Admin with unconstrained delegation' });
+        findings.critical.push({ type: 'SENSITIVE_DELEGATION', ...getUserDetails(user) });
       }
     }
 
@@ -2139,8 +2175,8 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const lapsPassword = user.attributes.find(a => a.type === 'ms-Mcs-AdmPwd')?.values[0];
 
       if (lapsPassword) {
-        advancedSecurity.lapsReadable.push({ sam, dn });
-        findings.info.push({ type: 'LAPS_PASSWORD_SET', sam, dn });
+        advancedSecurity.lapsReadable.push(getUserDetails(user));
+        findings.info.push({ type: 'LAPS_PASSWORD_SET', ...getUserDetails(user) });
       }
     }
 
@@ -2244,11 +2280,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         const age = now - created;
 
         if (age < timeThresholds.days7) {
-          temporalAnalysis.created7days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created7days.push({ ...getUserDetails(user), created: whenCreatedStr });
         } else if (age < timeThresholds.days30) {
-          temporalAnalysis.created30days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created30days.push({ ...getUserDetails(user), created: whenCreatedStr });
         } else if (age < timeThresholds.days90) {
-          temporalAnalysis.created90days.push({ sam, dn, created: whenCreatedStr });
+          temporalAnalysis.created90days.push({ ...getUserDetails(user), created: whenCreatedStr });
         }
       }
 
@@ -2257,9 +2293,9 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         const age = now - changed;
 
         if (age < timeThresholds.days7) {
-          temporalAnalysis.modified7days.push({ sam, dn, modified: whenChangedStr });
+          temporalAnalysis.modified7days.push({ ...getUserDetails(user), modified: whenChangedStr });
         } else if (age < timeThresholds.days30) {
-          temporalAnalysis.modified30days.push({ sam, dn, modified: whenChangedStr });
+          temporalAnalysis.modified30days.push({ ...getUserDetails(user), modified: whenChangedStr });
         }
       }
     }
@@ -2291,24 +2327,24 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       const dn = group.objectName;
 
       if (members.length === 0) {
-        groupAnalysis.emptyGroups.push({ sam, dn });
+        groupAnalysis.emptyGroups.push(getUserDetails(user));
       }
 
       if (members.length > 1000) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'critical' });
-        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'critical' });
+        findings.high.push({ type: 'OVERSIZED_GROUP_CRITICAL', ...getUserDetails(user), memberCount: members.length });
       } else if (members.length > 500) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'high' });
-        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'high' });
+        findings.medium.push({ type: 'OVERSIZED_GROUP_HIGH', ...getUserDetails(user), memberCount: members.length });
       } else if (members.length > 100) {
-        groupAnalysis.oversizedGroups.push({ sam, dn, memberCount: members.length, severity: 'info' });
-        findings.info.push({ type: 'OVERSIZED_GROUP', sam, memberCount: members.length });
+        groupAnalysis.oversizedGroups.push({ ...getUserDetails(user), memberCount: members.length, severity: 'info' });
+        findings.info.push({ type: 'OVERSIZED_GROUP', ...getUserDetails(user), memberCount: members.length });
       }
 
       if (whenChanged) {
         const changedDate = new Date(whenChanged).getTime();
         if (now - changedDate < timeThresholds.days7) {
-          groupAnalysis.recentlyModified.push({ sam, dn, modified: whenChanged });
+          groupAnalysis.recentlyModified.push({ ...getUserDetails(user), modified: whenChanged });
         }
       }
     }

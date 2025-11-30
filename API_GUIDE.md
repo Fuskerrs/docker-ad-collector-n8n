@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.7.1
+## Version: 1.7.2
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -511,6 +511,32 @@ Performs a comprehensive enterprise-grade security audit of Active Directory wit
 |-----------|------|----------|-------------|
 | `includeDetails` | boolean | No | Include detailed lists (default: false = counts only) |
 | `includeComputers` | boolean | No | Include computer analysis (slower, default: false) |
+
+#### Enhanced Account Details (v1.7.2+)
+
+When `includeDetails: true`, each affected account now includes **15+ additional AD attributes** for enhanced security analysis and identification:
+
+**🔴 Security-Critical Fields:**
+- `whenCreated` - Account creation date (detect suspicious new accounts)
+- `lastLogonTimestamp` / `lastLogon` - Last logon time (identify dormant accounts)
+- `pwdLastSet` - Last password change date (password age analysis)
+- `adminCount` - Privileged account indicator
+
+**🟡 Identification/Contact:**
+- `displayName` - Full display name
+- `mail` - Email address (for remediation contact)
+- `userPrincipalName` - UPN (alternative identifier)
+- `description` - Account description (may contain sensitive data!)
+
+**🟢 Organizational Context:**
+- `title` - Job title
+- `department` - Department name
+- `manager` - Manager DN
+- `company` - Company name
+- `employeeID` - Employee ID
+- `telephoneNumber` - Phone number
+
+**Note:** Null values are automatically filtered to minimize payload size.
 
 **Example:**
 ```bash

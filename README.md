@@ -47,6 +47,17 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ##  Latest Updates
 
+### v1.7.2 (November 2025)
+**Enhanced Audit Details - Full AD Attributes**
+
+- ✅ **Extended Account Details** - Added 15+ additional AD attributes to audit results
+- ✅ **Security-Critical Fields**: `whenCreated`, `lastLogonTimestamp`, `pwdLastSet`, `adminCount`
+- ✅ **Contact Information**: `mail`, `userPrincipalName`, `description`
+- ✅ **Complete Context**: `title`, `department`, `manager`, `company`, `employeeID`, `telephoneNumber`
+- 🎯 **Better Identification** - Display names, job titles, and organizational context for all affected accounts
+- 🔍 **Enhanced Analysis** - Password in description detection, dormant account identification
+- 🚀 **Performance**: Null values filtered to minimize payload size
+
 ### v1.7.1 (November 2025)
 **SSE Buffering Fix + Audit Cache**
 
