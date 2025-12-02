@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.4');
+console.log('AD Collector for n8n - v1.7.5');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -290,7 +290,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.4' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.5' });
 });
 
 // Test LDAP connection
@@ -2632,10 +2632,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     sendEvent('complete', finalResponse);
 
     // Force flush before closing (important for SSE!)
-    // Use setImmediate to ensure the event is written before res.end()
-    setImmediate(() => {
+    // Need actual delay for Node.js fetch to read the complete event
+    // setImmediate is NOT enough for large payloads
+    setTimeout(() => {
       res.end();
-    });
+    }, 100);  // 100ms delay ensures buffer is flushed
 
   } catch (error) {
     res.write(`event: error\n`);

@@ -1,6 +1,6 @@
 {
   "name": "ad-collector-n8n",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Active Directory Collector API for n8n-nodes-ad-admin",
   "main": "server.js",
   "scripts": {
