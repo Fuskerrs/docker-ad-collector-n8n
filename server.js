@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.7.5');
+console.log('AD Collector for n8n - v1.8.0-phase1');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -290,7 +290,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.7.5' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.8.0-phase1' });
 });
 
 // Test LDAP connection
@@ -931,6 +931,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       // Password never expires
       if (uac & 0x10000) {
         passwordIssues.neverExpires.push(getUserDetails(user));
+        findings.medium.push({ type: 'PASSWORD_NEVER_EXPIRES', ...getUserDetails(user) });
       }
 
       // Password not required
@@ -948,6 +949,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       // Cannot change password
       if (uac & 0x40) {
         passwordIssues.cannotChange.push(getUserDetails(user));
+        findings.low.push({ type: 'USER_CANNOT_CHANGE_PASSWORD', ...getUserDetails(user) });
       }
 
       // Check password age
@@ -1146,6 +1148,27 @@ app.post('/api/audit', authenticate, async (req, res) => {
         const group = await searchOne(`(sAMAccountName=${escapeLdap(groupName)})`);
         const members = group.attributes.find(a => a.type === 'member')?.values || [];
         privilegedAccounts[key] = members.map(dn => ({ dn }));
+
+        // Add findings for group memberships
+        for (const memberDn of members) {
+          if (key === 'backupOperators') {
+            findings.high.push({ type: 'BACKUP_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'accountOperators') {
+            findings.high.push({ type: 'ACCOUNT_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'serverOperators') {
+            findings.high.push({ type: 'SERVER_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'printOperators') {
+            findings.high.push({ type: 'PRINT_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'schemaAdmins') {
+            findings.medium.push({ type: 'SCHEMA_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'enterpriseAdmins') {
+            findings.medium.push({ type: 'ENTERPRISE_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'domainAdmins') {
+            findings.medium.push({ type: 'DOMAIN_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'administrators') {
+            findings.medium.push({ type: 'ADMINISTRATORS_MEMBER', dn: memberDn });
+          }
+        }
 
         if (['domainAdmins', 'enterpriseAdmins', 'schemaAdmins'].includes(key)) {
           findings.info.push({ type: `PRIVILEGED_GROUP_${key.toUpperCase()}`, count: members.length });
@@ -1378,6 +1401,19 @@ app.post('/api/audit', authenticate, async (req, res) => {
       if (!protectedUsersMembers.includes(account.dn)) {
         advancedSecurity.protectedUsersBypass.push(account);
         findings.medium.push({ type: 'NOT_IN_PROTECTED_USERS', dn: account.dn });
+      }
+    }
+
+    // Check for privileged accounts without smartcard required
+    for (const account of highPrivilegeAccounts) {
+      // Find the user object to check UAC
+      const user = allUsers.find(u => u.objectName === account.dn);
+      if (user) {
+        const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const smartcardRequired = uac & 0x40000; // SMARTCARD_REQUIRED flag
+        if (!smartcardRequired) {
+          findings.low.push({ type: 'SMARTCARD_NOT_REQUIRED', dn: account.dn });
+        }
       }
     }
 
@@ -2045,6 +2081,27 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         const members = group.attributes.find(a => a.type === 'member')?.values || [];
         privilegedAccounts[key] = members.map(dn => ({ dn }));
 
+        // Add findings for group memberships
+        for (const memberDn of members) {
+          if (key === 'backupOperators') {
+            findings.high.push({ type: 'BACKUP_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'accountOperators') {
+            findings.high.push({ type: 'ACCOUNT_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'serverOperators') {
+            findings.high.push({ type: 'SERVER_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'printOperators') {
+            findings.high.push({ type: 'PRINT_OPERATORS_MEMBER', dn: memberDn });
+          } else if (key === 'schemaAdmins') {
+            findings.medium.push({ type: 'SCHEMA_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'enterpriseAdmins') {
+            findings.medium.push({ type: 'ENTERPRISE_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'domainAdmins') {
+            findings.medium.push({ type: 'DOMAIN_ADMINS_MEMBER', dn: memberDn });
+          } else if (key === 'administrators') {
+            findings.medium.push({ type: 'ADMINISTRATORS_MEMBER', dn: memberDn });
+          }
+        }
+
         if (['domainAdmins', 'enterpriseAdmins', 'schemaAdmins'].includes(key)) {
           findings.info.push({ type: `PRIVILEGED_GROUP_${key.toUpperCase()}`, count: members.length });
         }
@@ -2259,6 +2316,19 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       if (!protectedUsersMembers.includes(account.dn)) {
         advancedSecurity.protectedUsersBypass.push(account);
         findings.medium.push({ type: 'NOT_IN_PROTECTED_USERS', dn: account.dn });
+      }
+    }
+
+    // Check for privileged accounts without smartcard required
+    for (const account of highPrivilegeAccounts) {
+      // Find the user object to check UAC
+      const user = allUsers.find(u => u.objectName === account.dn);
+      if (user) {
+        const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const smartcardRequired = uac & 0x40000; // SMARTCARD_REQUIRED flag
+        if (!smartcardRequired) {
+          findings.low.push({ type: 'SMARTCARD_NOT_REQUIRED', dn: account.dn });
+        }
       }
     }
 
