@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.7.2
+## Version: 1.8.0-phase1
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -750,49 +750,57 @@ The audit executes in 15 logical steps, each with a specific code:
 
 ### Security Findings Categories
 
-**Critical Findings:**
-- `PASSWORD_NOT_REQUIRED` - Account with no password required
-- `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption
-- `ASREP_ROASTING_RISK` - Account vulnerable to AS-REP roasting
-- `UNCONSTRAINED_DELEGATION` - Account with unconstrained delegation (very dangerous)
+**🔴 Critical Findings (8):**
+- `PASSWORD_NOT_REQUIRED` - Account with no password required (UAC 0x20)
+- `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption (UAC 0x80)
+- `ASREP_ROASTING_RISK` - Account vulnerable to AS-REP roasting (UAC 0x400000)
+- `UNCONSTRAINED_DELEGATION` - Account with unconstrained delegation (UAC 0x80000)
+- `PASSWORD_IN_DESCRIPTION` - Password detected in description/info field
 - `UNIX_USER_PASSWORD` - Unix password attribute set (plaintext password risk)
-- `SENSITIVE_DELEGATION` - Privileged account (adminCount=1) with unconstrained delegation
+- `WEAK_ENCRYPTION_DES` - Account configured for DES Kerberos encryption (msDS-SupportedEncryptionTypes)
+- `SENSITIVE_DELEGATION` - Privileged account (adminCount=1) with delegation enabled
 
-**High Findings:**
+**🟠 High Findings (13):**
 - `KERBEROASTING_RISK` - Account with SPN (Kerberoasting vulnerable)
-- `PASSWORD_NEVER_EXPIRES` - Account with password that never expires
-- `ACCOUNT_LOCKED` - Locked account (possible attack)
-- `PRIVILEGED_ACCOUNT` - Highly privileged account detected
+- `CONSTRAINED_DELEGATION` - Account with constrained delegation (msDS-AllowedToDelegateTo)
 - `SID_HISTORY` - SID History attribute populated (privilege escalation risk)
-- `WEAK_ENCRYPTION_DES` - Account configured for DES-only Kerberos encryption
-- `OVERSIZED_GROUP_HIGH` - Group with >500 members (management difficulty)
+- `WEAK_ENCRYPTION_RC4` - Account configured for RC4-only encryption (no AES)
+- `WEAK_ENCRYPTION_FLAG` - Account with USE_DES_KEY_ONLY flag set (UAC 0x200000)
 - `GPO_MODIFY_RIGHTS` - Member of Group Policy Creator Owners (can modify GPOs)
 - `DNS_ADMINS_MEMBER` - Member of DnsAdmins (can execute code on DC via DLL)
 - `REPLICATION_RIGHTS` - AdminCount=1 account outside standard admin groups (potential DCSync)
-
-**Medium Findings:**
-- `PASSWORD_VERY_OLD` - Password older than 1 year
-- `PASSWORD_EXPIRED` - Expired password
-- `INACTIVE_180_DAYS` - Account inactive for 180+ days
-- `CONSTRAINED_DELEGATION` - Account with constrained delegation
-- `NOT_IN_PROTECTED_USERS` - Privileged account not in Protected Users group
-- `WEAK_ENCRYPTION_FLAG` - Account with USE_DES_KEY_ONLY flag set
-- `OVERSIZED_GROUP` - Group with >100 members
-- `DELEGATION_PRIVILEGE` - Member of Account/Server Operators (can modify delegation settings)
-
-**Low Findings:**
-- `INACTIVE_90_DAYS` - Account inactive for 90+ days
-- `PASSWORD_CANNOT_CHANGE` - User cannot change password
-- `ACCOUNT_DISABLED` - Disabled account
-- `NEVER_LOGGED_ON` - Account never used
-
-**Info Findings:**
-- `EMPTY_GROUP` - Group with no members
 - `OVERSIZED_GROUP_CRITICAL` - Very large group (>1000 members)
-- `TEST_ACCOUNT` - Possible test account
-- `SHARED_ACCOUNT` - Possible shared account
+- `BACKUP_OPERATORS_MEMBER` - **[NEW]** Member of Backup Operators (can read NTDS.dit)
+- `ACCOUNT_OPERATORS_MEMBER` - **[NEW]** Member of Account Operators (can create accounts)
+- `SERVER_OPERATORS_MEMBER` - **[NEW]** Member of Server Operators (RCE via services)
+- `PRINT_OPERATORS_MEMBER` - **[NEW]** Member of Print Operators (SYSTEM escalation)
+
+**🟡 Medium Findings (10):**
+- `PASSWORD_VERY_OLD` - Password older than 1 year (pwdLastSet > 365 days)
+- `INACTIVE_365_DAYS` - Account inactive for 365+ days
+- `SHARED_ACCOUNT` - Possible shared account (samAccountName pattern)
+- `WEAK_ENCRYPTION_RC4_WITH_AES` - RC4 enabled alongside AES (downgrade attack risk)
+- `NOT_IN_PROTECTED_USERS` - Privileged account not in Protected Users group
+- `DELEGATION_PRIVILEGE` - Member of Account/Server Operators (can modify delegation)
+- `OVERSIZED_GROUP_HIGH` - Group with 500-1000 members
+- `PASSWORD_NEVER_EXPIRES` - **[NEW]** Account with password that never expires (UAC 0x10000)
+- `SCHEMA_ADMINS_MEMBER` - **[NEW]** Member of Schema Admins (can modify AD schema)
+- `ENTERPRISE_ADMINS_MEMBER` - **[NEW]** Member of Enterprise Admins (forest control)
+- `DOMAIN_ADMINS_MEMBER` - **[NEW]** Member of Domain Admins (domain control)
+- `ADMINISTRATORS_MEMBER` - **[NEW]** Member of builtin Administrators group
+
+**🔵 Low Findings (2):**
+- `TEST_ACCOUNT` - Possible test account (samAccountName pattern)
+- `USER_CANNOT_CHANGE_PASSWORD` - **[NEW]** User cannot change password (UAC 0x40)
+- `SMARTCARD_NOT_REQUIRED` - **[NEW]** Privileged account without smartcard requirement (UAC 0x40000)
+
+**ℹ️ Info Findings:**
+- `PRIVILEGED_GROUP_DOMAINADMINS` - Domain Admins group member count
+- `PRIVILEGED_GROUP_ENTERPRISEADMINS` - Enterprise Admins group member count
+- `PRIVILEGED_GROUP_SCHEMAADMINS` - Schema Admins group member count
 - `LAPS_PASSWORD_SET` - Computer has LAPS password set (informational)
 - `DCSYNC_CAPABLE` - Account member of DA/EA/Administrators (DCSync capable)
+- `OVERSIZED_GROUP` - Group with 100-500 members
 
 ---
 
