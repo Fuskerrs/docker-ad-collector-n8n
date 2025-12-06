@@ -410,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.2' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.3' });
 });
 
 // Test LDAP connection
@@ -2144,10 +2144,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
+        let domainRoot; // Declare outside try block for Phase 4 access
 
         // Add domain root
         try {
-          const domainRoot = await searchOne('(objectClass=domain)');
+          domainRoot = await searchOne('(objectClass=domain)');
           if (domainRoot) sensitiveObjects.push({ obj: domainRoot, type: 'Domain Root' });
         } catch (e) {}
 
@@ -3889,10 +3890,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
+        let domainRoot; // Declare outside try block for Phase 4 access
 
         // Add domain root
         try {
-          const domainRoot = await searchOne('(objectClass=domain)');
+          domainRoot = await searchOne('(objectClass=domain)');
           if (domainRoot) sensitiveObjects.push({ obj: domainRoot, type: 'Domain Root' });
         } catch (e) {}
 

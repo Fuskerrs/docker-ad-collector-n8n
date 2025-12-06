@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.1.2",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.2: Fixed SSE step naming (STEP_69/70) for complete 70-step audit stream",
+  "version": "2.1.3",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.3: Fixed domainRoot scope bug - Phase 4 (STEP_59-68) now properly sent via SSE",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
