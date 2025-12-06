@@ -410,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.3' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.4' });
 });
 
 // Test LDAP connection
@@ -2012,6 +2012,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     // ==========================================
     // PHASE 3 - ACL & Advanced Checks (STEP_47 to STEP_58)
     // ==========================================
+    let domainRoot; // Declare here for Phase 4 access
     try {
       // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse (STEP_47)
       let shadowCredsCount = 0;
@@ -2144,7 +2145,6 @@ app.post('/api/audit', authenticate, async (req, res) => {
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
-        let domainRoot; // Declare outside try block for Phase 4 access
 
         // Add domain root
         try {
@@ -3758,6 +3758,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     // ==========================================
     // PHASE 3 - ACL & Advanced Checks (STEP_47 to STEP_58)
     // ==========================================
+    let domainRoot; // Declare here for Phase 4 access
     try {
       // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse (STEP_47)
       let shadowCredsCount = 0;
@@ -3890,7 +3891,6 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
-        let domainRoot; // Declare outside try block for Phase 4 access
 
         // Add domain root
         try {
