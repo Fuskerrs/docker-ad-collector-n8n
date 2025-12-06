@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v2.0.0');
+console.log('AD Collector for n8n - v2.1.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -410,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '2.0.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.0' });
 });
 
 // Test LDAP connection
@@ -2294,6 +2294,289 @@ app.post('/api/audit', authenticate, async (req, res) => {
     }
     stepStart = Date.now();
 
+    // STEP 13f: PHASE 4 - ADCS/PKI + LAPS Security Checks
+    try {
+      // Get Configuration naming context for ADCS objects
+      const configurationNC = domainRoot.attributes.find(a => a.type === 'configurationNamingContext')?.values[0];
+
+      if (configurationNC) {
+        // ADCS Certificate Templates Analysis
+        try {
+          const certTemplates = await searchMany(
+            '(objectClass=pKICertificateTemplate)',
+            ['cn', 'displayName', 'pKIExtendedKeyUsage', 'msPKI-Certificate-Name-Flag',
+             'msPKI-Enrollment-Flag', 'nTSecurityDescriptor', 'msPKI-Certificate-Application-Policy'],
+            100,
+            configurationNC
+          );
+
+          for (const template of certTemplates) {
+            const cn = template.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+            const displayName = template.attributes.find(a => a.type === 'displayName')?.values[0] || cn;
+            const ekus = template.attributes.find(a => a.type === 'pKIExtendedKeyUsage')?.values || [];
+            const appPolicies = template.attributes.find(a => a.type === 'msPKI-Certificate-Application-Policy')?.values || [];
+            const nameFlags = template.attributes.find(a => a.type === 'msPKI-Certificate-Name-Flag')?.values[0];
+            const enrollFlags = template.attributes.find(a => a.type === 'msPKI-Enrollment-Flag')?.values[0];
+
+            // Combine EKUs and Application Policies
+            const allEkus = [...ekus, ...appPolicies];
+
+            // Client Authentication OID
+            const CLIENT_AUTH_OID = '1.3.6.1.5.5.7.3.2';
+            const ANY_PURPOSE_OID = '2.5.29.37.0';
+            const ENROLLMENT_AGENT_OID = '1.3.6.1.4.1.311.20.2.1';
+
+            const hasClientAuth = allEkus.includes(CLIENT_AUTH_OID);
+            const hasAnyPurpose = allEkus.includes(ANY_PURPOSE_OID) || allEkus.length === 0;
+            const hasEnrollmentAgent = allEkus.includes(ENROLLMENT_AGENT_OID);
+
+            // Certificate name flags (bitwise)
+            const ENROLLEE_SUPPLIES_SUBJECT = 0x00000001;
+            const SUBJECT_ALT_REQUIRE_UPN = 0x01000000;
+            const SUBJECT_ALT_REQUIRE_DNS = 0x08000000;
+
+            const enrolleeSuppliesSubject = nameFlags && (nameFlags & ENROLLEE_SUPPLIES_SUBJECT);
+
+            // ESC1_VULNERABLE_TEMPLATE (078 - CRITICAL)
+            if (hasClientAuth && enrolleeSuppliesSubject) {
+              findings.critical.push({
+                type: 'ESC1_VULNERABLE_TEMPLATE',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" allows client authentication with enrollee-supplied subject (ESC1) - Domain takeover risk`,
+                ekus: allEkus,
+                nameFlags: nameFlags
+              });
+            }
+
+            // ESC2_ANY_PURPOSE (079 - CRITICAL)
+            if (hasAnyPurpose && !hasClientAuth) {
+              findings.critical.push({
+                type: 'ESC2_ANY_PURPOSE',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" allows Any Purpose EKU (ESC2) - Can be used for any authentication`,
+                ekus: allEkus.length === 0 ? ['No EKU restrictions'] : allEkus
+              });
+            }
+
+            // ESC3_ENROLLMENT_AGENT (080 - HIGH)
+            if (hasEnrollmentAgent) {
+              findings.high.push({
+                type: 'ESC3_ENROLLMENT_AGENT',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" is an Enrollment Agent template (ESC3) - Can request certificates on behalf of others`,
+                ekus: allEkus
+              });
+            }
+
+            // ESC4_VULNERABLE_TEMPLATE_ACL (081 - HIGH)
+            const ntSecDesc = template.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+            if (ntSecDesc) {
+              const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+              const aclData = parseSecurityDescriptor(sdBuffer);
+
+              if (aclData.aces) {
+                for (const ace of aclData.aces) {
+                  // Check for weak permissions (not built-in admins)
+                  if ((ace.permissions.genericAll || ace.permissions.writeDACL || ace.permissions.writeOwner) &&
+                      !ace.sid.includes('S-1-5-32-544') && // Not BUILTIN\Administrators
+                      (ace.isEveryone || ace.isAuthenticatedUsers || ace.sid.includes('S-1-5-11'))) {
+                    findings.high.push({
+                      type: 'ESC4_VULNERABLE_TEMPLATE_ACL',
+                      templateName: displayName,
+                      templateCN: cn,
+                      dn: template.objectName,
+                      trusteeSid: ace.sid,
+                      trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                      message: `Certificate template "${displayName}" has weak ACL (ESC4) - ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} can modify template`
+                    });
+                    break; // One finding per template is enough
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ADCS templates not found (ADCS may not be deployed)
+        }
+
+        // ADCS Certificate Authorities Analysis
+        try {
+          const certAuthorities = await searchMany(
+            '(objectClass=pKIEnrollmentService)',
+            ['cn', 'dNSHostName', 'certificateTemplates', 'flags', 'msPKI-Enrollment-Servers'],
+            50,
+            configurationNC
+          );
+
+          for (const ca of certAuthorities) {
+            const caName = ca.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown CA';
+            const dnsHostName = ca.attributes.find(a => a.type === 'dNSHostName')?.values[0];
+            const flags = ca.attributes.find(a => a.type === 'flags')?.values[0];
+
+            // ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2 (082 - HIGH)
+            const EDITF_ATTRIBUTESUBJECTALTNAME2 = 0x00040000;
+            if (flags && (flags & EDITF_ATTRIBUTESUBJECTALTNAME2)) {
+              findings.high.push({
+                type: 'ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2',
+                caName: caName,
+                dnsHostName: dnsHostName,
+                dn: ca.objectName,
+                message: `CA "${caName}" has EDITF_ATTRIBUTESUBJECTALTNAME2 flag enabled (ESC6) - Allows arbitrary SAN in certificate requests`
+              });
+            }
+
+            // ESC8_HTTP_ENROLLMENT (083 - MEDIUM)
+            const enrollServers = ca.attributes.find(a => a.type === 'msPKI-Enrollment-Servers')?.values || [];
+            for (const server of enrollServers) {
+              if (server.toLowerCase().includes('http://') && !server.toLowerCase().includes('https://')) {
+                findings.medium.push({
+                  type: 'ESC8_HTTP_ENROLLMENT',
+                  caName: caName,
+                  enrollmentUrl: server,
+                  dn: ca.objectName,
+                  message: `CA "${caName}" has HTTP (non-HTTPS) enrollment endpoint (ESC8) - NTLM relay vulnerability`
+                });
+              }
+            }
+          }
+        } catch (e) {
+          // CAs not found
+        }
+      }
+
+      // LAPS (Local Admin Password Solution) Analysis
+      try {
+        // LAPS_NOT_DEPLOYED (084 - MEDIUM)
+        const computersWithoutLAPS = await searchMany(
+          '(&(objectClass=computer)(!(ms-Mcs-AdmPwd=*)(!(msLAPS-Password=*))))',
+          ['cn', 'dNSHostName', 'operatingSystem'],
+          100
+        );
+
+        if (computersWithoutLAPS.length > 0) {
+          findings.medium.push({
+            type: 'LAPS_NOT_DEPLOYED',
+            count: computersWithoutLAPS.length,
+            message: `${computersWithoutLAPS.length} computers without LAPS deployment - Local admin passwords may be static`,
+            samples: computersWithoutLAPS.slice(0, 5).map(c => ({
+              cn: c.attributes.find(a => a.type === 'cn')?.values[0],
+              dnsHostName: c.attributes.find(a => a.type === 'dNSHostName')?.values[0]
+            }))
+          });
+        }
+
+        // LAPS_PASSWORD_READABLE (085 - HIGH)
+        // Check if non-admin users can read LAPS password attributes
+        const computersWithLAPS = await searchMany(
+          '(|(ms-Mcs-AdmPwd=*)(msLAPS-Password=*))',
+          ['cn', 'dNSHostName', 'ms-Mcs-AdmPwd', 'msLAPS-Password', 'nTSecurityDescriptor'],
+          50
+        );
+
+        for (const computer of computersWithLAPS) {
+          const cn = computer.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+          const ntSecDesc = computer.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+          if (ntSecDesc) {
+            const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+            const aclData = parseSecurityDescriptor(sdBuffer);
+
+            if (aclData.aces) {
+              for (const ace of aclData.aces) {
+                // Check for read permissions on LAPS attributes by non-admins
+                if ((ace.permissions.genericAll || ace.permissions.controlAccess || ace.permissions.writeProperty) &&
+                    (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                  findings.high.push({
+                    type: 'LAPS_PASSWORD_READABLE',
+                    computerName: cn,
+                    dn: computer.objectName,
+                    trusteeSid: ace.sid,
+                    trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                    message: `LAPS password on "${cn}" readable by ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} - Weak ACL on computer object`
+                  });
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // LAPS_LEGACY_ATTRIBUTE (086 - MEDIUM)
+        const computersWithLegacyLAPS = await searchMany(
+          '(&(ms-Mcs-AdmPwd=*)(!(msLAPS-Password=*)))',
+          ['cn', 'dNSHostName', 'ms-Mcs-AdmPwd'],
+          100
+        );
+
+        if (computersWithLegacyLAPS.length > 0) {
+          findings.medium.push({
+            type: 'LAPS_LEGACY_ATTRIBUTE',
+            count: computersWithLegacyLAPS.length,
+            message: `${computersWithLegacyLAPS.length} computers using legacy LAPS (ms-Mcs-AdmPwd) instead of Windows LAPS 2.0 (msLAPS-Password)`,
+            samples: computersWithLegacyLAPS.slice(0, 5).map(c => ({
+              cn: c.attributes.find(a => a.type === 'cn')?.values[0],
+              dnsHostName: c.attributes.find(a => a.type === 'dNSHostName')?.values[0]
+            }))
+          });
+        }
+
+        // ADCS_WEAK_PERMISSIONS (087 - MEDIUM)
+        if (configurationNC) {
+          try {
+            const pkiContainers = await searchMany(
+              '(|(objectClass=pKIEnrollmentService)(objectClass=certificationAuthority))',
+              ['cn', 'nTSecurityDescriptor'],
+              50,
+              configurationNC
+            );
+
+            for (const pkiObj of pkiContainers) {
+              const cn = pkiObj.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+              const ntSecDesc = pkiObj.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+              if (ntSecDesc) {
+                const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+                const aclData = parseSecurityDescriptor(sdBuffer);
+
+                if (aclData.aces) {
+                  for (const ace of aclData.aces) {
+                    if ((ace.permissions.genericAll || ace.permissions.writeDACL) &&
+                        (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                      findings.medium.push({
+                        type: 'ADCS_WEAK_PERMISSIONS',
+                        objectName: cn,
+                        dn: pkiObj.objectName,
+                        trusteeSid: ace.sid,
+                        trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                        message: `PKI object "${cn}" has weak permissions - ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} can modify CA/enrollment service`
+                      });
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // PKI containers not found
+          }
+        }
+
+      } catch (e) {
+        // LAPS analysis failed
+      }
+
+      trackStep('STEP_13f_PHASE4', 'Phase 4 security checks (ADCS/PKI + LAPS)', { count: 10 });
+    } catch (e) {
+      // Phase 4 checks failed
+    }
+    stepStart = Date.now();
+
     // STEP 14: Risk Scoring
     const riskScore = {
       critical: findings.critical.length,
@@ -3685,6 +3968,289 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       trackStep('STEP_13e_PHASE3', 'Phase 3 security checks (ACL + Advanced)', { count: 12 });
     } catch (e) {
       // Phase 3 checks failed
+    }
+    stepStart = Date.now();
+
+    // STEP 13f: PHASE 4 - ADCS/PKI + LAPS Security Checks
+    try {
+      // Get Configuration naming context for ADCS objects
+      const configurationNC = domainRoot.attributes.find(a => a.type === 'configurationNamingContext')?.values[0];
+
+      if (configurationNC) {
+        // ADCS Certificate Templates Analysis
+        try {
+          const certTemplates = await searchMany(
+            '(objectClass=pKICertificateTemplate)',
+            ['cn', 'displayName', 'pKIExtendedKeyUsage', 'msPKI-Certificate-Name-Flag',
+             'msPKI-Enrollment-Flag', 'nTSecurityDescriptor', 'msPKI-Certificate-Application-Policy'],
+            100,
+            configurationNC
+          );
+
+          for (const template of certTemplates) {
+            const cn = template.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+            const displayName = template.attributes.find(a => a.type === 'displayName')?.values[0] || cn;
+            const ekus = template.attributes.find(a => a.type === 'pKIExtendedKeyUsage')?.values || [];
+            const appPolicies = template.attributes.find(a => a.type === 'msPKI-Certificate-Application-Policy')?.values || [];
+            const nameFlags = template.attributes.find(a => a.type === 'msPKI-Certificate-Name-Flag')?.values[0];
+            const enrollFlags = template.attributes.find(a => a.type === 'msPKI-Enrollment-Flag')?.values[0];
+
+            // Combine EKUs and Application Policies
+            const allEkus = [...ekus, ...appPolicies];
+
+            // Client Authentication OID
+            const CLIENT_AUTH_OID = '1.3.6.1.5.5.7.3.2';
+            const ANY_PURPOSE_OID = '2.5.29.37.0';
+            const ENROLLMENT_AGENT_OID = '1.3.6.1.4.1.311.20.2.1';
+
+            const hasClientAuth = allEkus.includes(CLIENT_AUTH_OID);
+            const hasAnyPurpose = allEkus.includes(ANY_PURPOSE_OID) || allEkus.length === 0;
+            const hasEnrollmentAgent = allEkus.includes(ENROLLMENT_AGENT_OID);
+
+            // Certificate name flags (bitwise)
+            const ENROLLEE_SUPPLIES_SUBJECT = 0x00000001;
+            const SUBJECT_ALT_REQUIRE_UPN = 0x01000000;
+            const SUBJECT_ALT_REQUIRE_DNS = 0x08000000;
+
+            const enrolleeSuppliesSubject = nameFlags && (nameFlags & ENROLLEE_SUPPLIES_SUBJECT);
+
+            // ESC1_VULNERABLE_TEMPLATE (078 - CRITICAL)
+            if (hasClientAuth && enrolleeSuppliesSubject) {
+              findings.critical.push({
+                type: 'ESC1_VULNERABLE_TEMPLATE',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" allows client authentication with enrollee-supplied subject (ESC1) - Domain takeover risk`,
+                ekus: allEkus,
+                nameFlags: nameFlags
+              });
+            }
+
+            // ESC2_ANY_PURPOSE (079 - CRITICAL)
+            if (hasAnyPurpose && !hasClientAuth) {
+              findings.critical.push({
+                type: 'ESC2_ANY_PURPOSE',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" allows Any Purpose EKU (ESC2) - Can be used for any authentication`,
+                ekus: allEkus.length === 0 ? ['No EKU restrictions'] : allEkus
+              });
+            }
+
+            // ESC3_ENROLLMENT_AGENT (080 - HIGH)
+            if (hasEnrollmentAgent) {
+              findings.high.push({
+                type: 'ESC3_ENROLLMENT_AGENT',
+                templateName: displayName,
+                templateCN: cn,
+                dn: template.objectName,
+                message: `Certificate template "${displayName}" is an Enrollment Agent template (ESC3) - Can request certificates on behalf of others`,
+                ekus: allEkus
+              });
+            }
+
+            // ESC4_VULNERABLE_TEMPLATE_ACL (081 - HIGH)
+            const ntSecDesc = template.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+            if (ntSecDesc) {
+              const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+              const aclData = parseSecurityDescriptor(sdBuffer);
+
+              if (aclData.aces) {
+                for (const ace of aclData.aces) {
+                  // Check for weak permissions (not built-in admins)
+                  if ((ace.permissions.genericAll || ace.permissions.writeDACL || ace.permissions.writeOwner) &&
+                      !ace.sid.includes('S-1-5-32-544') && // Not BUILTIN\Administrators
+                      (ace.isEveryone || ace.isAuthenticatedUsers || ace.sid.includes('S-1-5-11'))) {
+                    findings.high.push({
+                      type: 'ESC4_VULNERABLE_TEMPLATE_ACL',
+                      templateName: displayName,
+                      templateCN: cn,
+                      dn: template.objectName,
+                      trusteeSid: ace.sid,
+                      trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                      message: `Certificate template "${displayName}" has weak ACL (ESC4) - ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} can modify template`
+                    });
+                    break; // One finding per template is enough
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ADCS templates not found (ADCS may not be deployed)
+        }
+
+        // ADCS Certificate Authorities Analysis
+        try {
+          const certAuthorities = await searchMany(
+            '(objectClass=pKIEnrollmentService)',
+            ['cn', 'dNSHostName', 'certificateTemplates', 'flags', 'msPKI-Enrollment-Servers'],
+            50,
+            configurationNC
+          );
+
+          for (const ca of certAuthorities) {
+            const caName = ca.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown CA';
+            const dnsHostName = ca.attributes.find(a => a.type === 'dNSHostName')?.values[0];
+            const flags = ca.attributes.find(a => a.type === 'flags')?.values[0];
+
+            // ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2 (082 - HIGH)
+            const EDITF_ATTRIBUTESUBJECTALTNAME2 = 0x00040000;
+            if (flags && (flags & EDITF_ATTRIBUTESUBJECTALTNAME2)) {
+              findings.high.push({
+                type: 'ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2',
+                caName: caName,
+                dnsHostName: dnsHostName,
+                dn: ca.objectName,
+                message: `CA "${caName}" has EDITF_ATTRIBUTESUBJECTALTNAME2 flag enabled (ESC6) - Allows arbitrary SAN in certificate requests`
+              });
+            }
+
+            // ESC8_HTTP_ENROLLMENT (083 - MEDIUM)
+            const enrollServers = ca.attributes.find(a => a.type === 'msPKI-Enrollment-Servers')?.values || [];
+            for (const server of enrollServers) {
+              if (server.toLowerCase().includes('http://') && !server.toLowerCase().includes('https://')) {
+                findings.medium.push({
+                  type: 'ESC8_HTTP_ENROLLMENT',
+                  caName: caName,
+                  enrollmentUrl: server,
+                  dn: ca.objectName,
+                  message: `CA "${caName}" has HTTP (non-HTTPS) enrollment endpoint (ESC8) - NTLM relay vulnerability`
+                });
+              }
+            }
+          }
+        } catch (e) {
+          // CAs not found
+        }
+      }
+
+      // LAPS (Local Admin Password Solution) Analysis
+      try {
+        // LAPS_NOT_DEPLOYED (084 - MEDIUM)
+        const computersWithoutLAPS = await searchMany(
+          '(&(objectClass=computer)(!(ms-Mcs-AdmPwd=*)(!(msLAPS-Password=*))))',
+          ['cn', 'dNSHostName', 'operatingSystem'],
+          100
+        );
+
+        if (computersWithoutLAPS.length > 0) {
+          findings.medium.push({
+            type: 'LAPS_NOT_DEPLOYED',
+            count: computersWithoutLAPS.length,
+            message: `${computersWithoutLAPS.length} computers without LAPS deployment - Local admin passwords may be static`,
+            samples: computersWithoutLAPS.slice(0, 5).map(c => ({
+              cn: c.attributes.find(a => a.type === 'cn')?.values[0],
+              dnsHostName: c.attributes.find(a => a.type === 'dNSHostName')?.values[0]
+            }))
+          });
+        }
+
+        // LAPS_PASSWORD_READABLE (085 - HIGH)
+        // Check if non-admin users can read LAPS password attributes
+        const computersWithLAPS = await searchMany(
+          '(|(ms-Mcs-AdmPwd=*)(msLAPS-Password=*))',
+          ['cn', 'dNSHostName', 'ms-Mcs-AdmPwd', 'msLAPS-Password', 'nTSecurityDescriptor'],
+          50
+        );
+
+        for (const computer of computersWithLAPS) {
+          const cn = computer.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+          const ntSecDesc = computer.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+          if (ntSecDesc) {
+            const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+            const aclData = parseSecurityDescriptor(sdBuffer);
+
+            if (aclData.aces) {
+              for (const ace of aclData.aces) {
+                // Check for read permissions on LAPS attributes by non-admins
+                if ((ace.permissions.genericAll || ace.permissions.controlAccess || ace.permissions.writeProperty) &&
+                    (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                  findings.high.push({
+                    type: 'LAPS_PASSWORD_READABLE',
+                    computerName: cn,
+                    dn: computer.objectName,
+                    trusteeSid: ace.sid,
+                    trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                    message: `LAPS password on "${cn}" readable by ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} - Weak ACL on computer object`
+                  });
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // LAPS_LEGACY_ATTRIBUTE (086 - MEDIUM)
+        const computersWithLegacyLAPS = await searchMany(
+          '(&(ms-Mcs-AdmPwd=*)(!(msLAPS-Password=*)))',
+          ['cn', 'dNSHostName', 'ms-Mcs-AdmPwd'],
+          100
+        );
+
+        if (computersWithLegacyLAPS.length > 0) {
+          findings.medium.push({
+            type: 'LAPS_LEGACY_ATTRIBUTE',
+            count: computersWithLegacyLAPS.length,
+            message: `${computersWithLegacyLAPS.length} computers using legacy LAPS (ms-Mcs-AdmPwd) instead of Windows LAPS 2.0 (msLAPS-Password)`,
+            samples: computersWithLegacyLAPS.slice(0, 5).map(c => ({
+              cn: c.attributes.find(a => a.type === 'cn')?.values[0],
+              dnsHostName: c.attributes.find(a => a.type === 'dNSHostName')?.values[0]
+            }))
+          });
+        }
+
+        // ADCS_WEAK_PERMISSIONS (087 - MEDIUM)
+        if (configurationNC) {
+          try {
+            const pkiContainers = await searchMany(
+              '(|(objectClass=pKIEnrollmentService)(objectClass=certificationAuthority))',
+              ['cn', 'nTSecurityDescriptor'],
+              50,
+              configurationNC
+            );
+
+            for (const pkiObj of pkiContainers) {
+              const cn = pkiObj.attributes.find(a => a.type === 'cn')?.values[0] || 'Unknown';
+              const ntSecDesc = pkiObj.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+              if (ntSecDesc) {
+                const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+                const aclData = parseSecurityDescriptor(sdBuffer);
+
+                if (aclData.aces) {
+                  for (const ace of aclData.aces) {
+                    if ((ace.permissions.genericAll || ace.permissions.writeDACL) &&
+                        (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                      findings.medium.push({
+                        type: 'ADCS_WEAK_PERMISSIONS',
+                        objectName: cn,
+                        dn: pkiObj.objectName,
+                        trusteeSid: ace.sid,
+                        trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                        message: `PKI object "${cn}" has weak permissions - ${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} can modify CA/enrollment service`
+                      });
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // PKI containers not found
+          }
+        }
+
+      } catch (e) {
+        // LAPS analysis failed
+      }
+
+      trackStep('STEP_13f_PHASE4', 'Phase 4 security checks (ADCS/PKI + LAPS)', { count: 10 });
+    } catch (e) {
+      // Phase 4 checks failed
     }
     stepStart = Date.now();
 

@@ -2,23 +2,24 @@
 
 ## Vue d'ensemble
 
-Le collecteur AD détecte actuellement **60 types de vulnérabilités** répartis en 4 niveaux de sévérité.
+Le collecteur AD détecte actuellement **70 types de vulnérabilités** répartis en 4 niveaux de sévérité.
 
 **Statistiques:**
-- 🔴 **Critique**: 10 vulnérabilités
-- 🟠 **High**: 18 vulnérabilités
-- 🟡 **Medium**: 28 vulnérabilités
+- 🔴 **Critique**: 12 vulnérabilités
+- 🟠 **High**: 22 vulnérabilités
+- 🟡 **Medium**: 32 vulnérabilités
 - 🔵 **Low**: 4 vulnérabilités
 
 **Évolution:**
 - v1.7.5: 23 vulnérabilités (baseline)
 - v1.8.0-phase1: 33 vulnérabilités (+10)
 - v1.9.0-phase2: 48 vulnérabilités (+25)
-- v2.0.0: **60 vulnérabilités (+12)** = **+161% d'amélioration totale**
+- v2.0.0: 60 vulnérabilités (+12) Phase 3: ACL parsing complet
+- v2.1.0: **70 vulnérabilités (+10)** = **+204% d'amélioration totale** Phase 4: ADCS/PKI + LAPS
 
 ---
 
-## 🔴 CRITICAL - Vulnérabilités Critiques (10)
+## 🔴 CRITICAL - Vulnérabilités Critiques (12)
 
 ### 1. PASSWORD_NOT_REQUIRED
 **Description:** Compte utilisateur ne nécessitant pas de mot de passe (UAC flag 0x20)
@@ -200,7 +201,53 @@ Set-ADComputer -Identity computername -Clear msDS-AllowedToActOnBehalfOfOtherIde
 
 ---
 
-## 🟠 HIGH - Vulnérabilités Importantes (18)
+### 12. ESC1_VULNERABLE_TEMPLATE **[NEW Phase 4]**
+**Description:** Template de certificat ADCS avec client authentication + enrollee supplies subject
+
+**Impact:** Permet la compromission totale du domaine en obtenant un certificat pour n'importe quel utilisateur (dont Domain Admin)
+
+**Détection:**
+- `pKIExtendedKeyUsage` contient OID 1.3.6.1.5.5.7.3.2 (Client Authentication)
+- `msPKI-Certificate-Name-Flag & 0x00000001` (ENROLLEE_SUPPLIES_SUBJECT)
+
+**Référence:** [Certified Pre-Owned - ESC1](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Désactiver "Supply in the request" dans le template de certificat
+# Via GUI: Certificate Templates Console > Properties > Subject Name >
+# Décocher "Supply in the request"
+
+# Ou via PowerShell (nécessite module PSPKI):
+Get-CertificateTemplate -Name "VulnerableTemplate" |
+  Set-CertificateTemplateProperty -Property msPKI-Certificate-Name-Flag -Value 0
+```
+
+---
+
+### 13. ESC2_ANY_PURPOSE **[NEW Phase 4]**
+**Description:** Template de certificat ADCS avec Any Purpose EKU ou sans restriction d'usage
+
+**Impact:** Le certificat peut être utilisé pour n'importe quel usage, y compris l'authentification de domaine
+
+**Détection:**
+- `pKIExtendedKeyUsage` contient OID 2.5.29.37.0 (Any Purpose)
+- OU `pKIExtendedKeyUsage` est vide/non défini
+
+**Référence:** [Certified Pre-Owned - ESC2](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Définir des EKUs spécifiques au lieu de "Any Purpose"
+# Via GUI: Certificate Templates Console > Properties > Extensions > Application Policies
+
+# Exemple: Limiter à Server Authentication uniquement
+# OID: 1.3.6.1.5.5.7.3.1
+```
+
+---
+
+## 🟠 HIGH - Vulnérabilités Importantes (22)
 
 ### 10. KERBEROASTING_RISK
 **Description:** Compte utilisateur avec Service Principal Name (SPN) configuré
@@ -481,7 +528,83 @@ dsacls "DC=domain,DC=com" /R "DOMAIN\user"
 
 ---
 
-## 🟡 MEDIUM - Vulnérabilités Moyennes (28)
+### 28. ESC3_ENROLLMENT_AGENT **[NEW Phase 4]**
+**Description:** Template de certificat configuré comme Enrollment Agent
+
+**Impact:** Permet de demander des certificats au nom d'autres utilisateurs (dont Domain Admin)
+
+**Détection:** `pKIExtendedKeyUsage` contient OID 1.3.6.1.4.1.311.20.2.1 (Certificate Request Agent)
+
+**Référence:** [Certified Pre-Owned - ESC3](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Limiter l'accès au template Enrollment Agent
+# Supprimer les permissions Enroll pour les utilisateurs non-administrateurs
+```
+
+---
+
+### 29. ESC4_VULNERABLE_TEMPLATE_ACL **[NEW Phase 4]**
+**Description:** Template de certificat avec ACL faible (Everyone/Authenticated Users avec GenericAll/WriteDACL/WriteOwner)
+
+**Impact:** N'importe quel utilisateur peut modifier le template pour créer une vulnérabilité ESC1/ESC2
+
+**Détection:** Analyse ACL du template de certificat dans CN=Configuration
+
+**Référence:** [Certified Pre-Owned - ESC4](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Auditer les ACLs sur les templates:
+$ConfigNC = (Get-ADRootDSE).configurationNamingContext
+Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigNC" -Filter * |
+  ForEach-Object { Get-ACL "AD:$($_.DistinguishedName)" }
+
+# Révoquer les permissions excessives
+```
+
+---
+
+### 30. ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2 **[NEW Phase 4]**
+**Description:** Autorité de certification avec flag EDITF_ATTRIBUTESUBJECTALTNAME2 activé
+
+**Impact:** Permet de spécifier un SAN arbitraire dans les requêtes de certificat (usurpation d'identité)
+
+**Détection:** `flags & 0x00040000` sur l'objet pKIEnrollmentService
+
+**Référence:** [Certified Pre-Owned - ESC6](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Désactiver le flag sur la CA:
+certutil -config "CA01\CA-NAME" -setreg policy\EditFlags -EDITF_ATTRIBUTESUBJECTALTNAME2
+
+# Redémarrer le service Certificate Services:
+Restart-Service CertSvc
+```
+
+---
+
+### 31. LAPS_PASSWORD_READABLE **[NEW Phase 4]**
+**Description:** Mot de passe LAPS lisible par Everyone ou Authenticated Users
+
+**Impact:** N'importe quel utilisateur du domaine peut lire les mots de passe administrateur local des ordinateurs
+
+**Détection:** ACL sur l'objet ordinateur permet la lecture de `ms-Mcs-AdmPwd` ou `msLAPS-Password` par des non-admins
+
+**Référence:** [LAPS Security](https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-scenarios-legacy)
+
+**Remédiation:**
+```powershell
+# Révoquer les permissions de lecture LAPS pour les non-admins:
+Import-Module AdmPwd.PS
+Set-AdmPwdReadPasswordPermission -OrgUnit "OU=Computers,DC=domain,DC=com" -AllowedPrincipals "Domain Admins" -Deny "Authenticated Users"
+```
+
+---
+
+## 🟡 MEDIUM - Vulnérabilités Moyennes (32)
 
 ### 25. PASSWORD_VERY_OLD
 **Description:** Mot de passe non changé depuis plus d'un an (365 jours)
@@ -801,6 +924,90 @@ Get-ADObject -Filter {adminCount -eq 1 -and isCriticalSystemObject -ne $true}
 
 ---
 
+### 53. ESC8_HTTP_ENROLLMENT **[NEW Phase 4]**
+**Description:** Endpoint d'enrollment ADCS accessible en HTTP (non-HTTPS)
+
+**Impact:** Vulnérable aux attaques NTLM relay - interception et relais des authentifications vers la CA
+
+**Détection:** `msPKI-Enrollment-Servers` contient une URL http:// (sans TLS)
+
+**Référence:** [Certified Pre-Owned - ESC8](https://posts.specterops.io/certified-pre-owned-d95910965cd2)
+
+**Remédiation:**
+```powershell
+# Désactiver l'enrollment HTTP et forcer HTTPS uniquement
+# Via GUI: Certificate Authority Console > Properties > Policy Module > Properties
+# Ou désactiver complètement Web Enrollment si non utilisé
+```
+
+---
+
+### 54. LAPS_NOT_DEPLOYED **[NEW Phase 4]**
+**Description:** Ordinateurs sans déploiement LAPS (aucun attribut ms-Mcs-AdmPwd ou msLAPS-Password)
+
+**Impact:** Mots de passe administrateur local probablement statiques et partagés - risque de lateral movement
+
+**Détection:** Objets computer sans `ms-Mcs-AdmPwd` ni `msLAPS-Password`
+
+**Référence:** [Windows LAPS](https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview)
+
+**Remédiation:**
+```powershell
+# Déployer LAPS via GPO sur tous les ordinateurs:
+# 1. Étendre le schéma AD (si LAPS legacy):
+Import-Module AdmPwd.PS
+Update-AdmPwdADSchema
+
+# 2. Créer et lier une GPO LAPS
+# Computer Configuration > Policies > Administrative Templates > LAPS
+# Activer "Enable local admin password management"
+```
+
+---
+
+### 55. LAPS_LEGACY_ATTRIBUTE **[NEW Phase 4]**
+**Description:** Utilisation de l'attribut LAPS legacy (ms-Mcs-AdmPwd) au lieu de Windows LAPS 2.0 (msLAPS-Password)
+
+**Impact:** LAPS legacy a des limitations de sécurité (pas de chiffrement côté client, historique limité)
+
+**Détection:** `ms-Mcs-AdmPwd` présent mais pas `msLAPS-Password`
+
+**Référence:** [Windows LAPS Migration](https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-scenarios-legacy)
+
+**Remédiation:**
+```powershell
+# Migrer vers Windows LAPS 2.0 (Windows Server 2025 / Windows 11 22H2+)
+# 1. Étendre le schéma pour Windows LAPS:
+Update-LapsADSchema
+
+# 2. Migrer les GPOs vers les nouveaux paramètres Windows LAPS
+# 3. Déployer les nouvelles DLLs LAPS via GPO
+```
+
+---
+
+### 56. ADCS_WEAK_PERMISSIONS **[NEW Phase 4]**
+**Description:** Objets PKI (CA, Enrollment Services) avec permissions Everyone/Authenticated Users
+
+**Impact:** Modification des services de certification par des utilisateurs non-admins
+
+**Détection:** ACL sur objets pKIEnrollmentService ou certificationAuthority dans CN=Configuration
+
+**Référence:** [ADCS Security Best Practices](https://learn.microsoft.com/en-us/windows-server/networking/core-network-guide/cncg/server-certs/install-the-certification-authority)
+
+**Remédiation:**
+```powershell
+# Auditer et corriger les ACLs sur les objets PKI:
+$ConfigNC = (Get-ADRootDSE).configurationNamingContext
+$PkiObjects = Get-ADObject -SearchBase "CN=Public Key Services,CN=Services,$ConfigNC" -Filter *
+foreach ($obj in $PkiObjects) {
+    $acl = Get-ACL "AD:$($obj.DistinguishedName)"
+    # Supprimer les ACEs Everyone/Authenticated Users si présentes
+}
+```
+
+---
+
 ## 🔵 LOW - Vulnérabilités Mineures (4)
 
 ### 46. TEST_ACCOUNT
@@ -904,11 +1111,11 @@ Set-ADUser -Identity username -ServicePrincipalName @{Remove='HTTP/duplicate.spn
 
 | Sévérité | Nombre | Évolution | Exemples |
 |----------|--------|-----------|----------|
-| 🔴 Critical | 10 | +2 | AS-REP Roasting, Golden Ticket, Shadow Credentials, RBCD |
-| 🟠 High | 18 | +3 | Kerberoasting, Backup Operators, ACL GenericAll/WriteDACL/WriteOwner |
-| 🟡 Medium | 28 | +7 | Password Policy, ACL abuse, Group Nesting, AdminSDHolder Backdoor |
+| 🔴 Critical | 12 | +2 (Phase 4) | AS-REP Roasting, Golden Ticket, ESC1, ESC2, Shadow Credentials |
+| 🟠 High | 22 | +4 (Phase 4) | Kerberoasting, ESC3/ESC4/ESC6, LAPS Readable, ACL GenericAll |
+| 🟡 Medium | 32 | +4 (Phase 4) | ESC8, LAPS Not Deployed, ADCS Weak Perms, ACL abuse |
 | 🔵 Low | 4 | - | Test accounts, Weak Kerberos, Duplicate SPN, NTLM Relay |
-| **TOTAL** | **60** | **+12** | **+161% vs v1.7.5 (Phase 3 Complete!)** |
+| **TOTAL** | **70** | **+10** | **+204% vs v1.7.5 (Phase 4: ADCS/PKI + LAPS)** |
 
 ---
 
@@ -962,9 +1169,15 @@ Ces vulnérabilités sont mappées aux standards suivants:
 
 ## 📝 Notes de Version
 
-**Version actuelle du collecteur:** v2.0.0
+**Version actuelle du collecteur:** v2.1.0
 
 **Changelog:**
+- v2.1.0: **PHASE 4 COMPLETE** - ADCS/PKI + LAPS = **70 total (+204%)**
+  - 2 CRITICAL: ESC1 (Enrollee Supplies Subject) + ESC2 (Any Purpose EKU)
+  - 4 HIGH: ESC3 (Enrollment Agent) + ESC4 (Template ACL) + ESC6 (SAN Specification) + LAPS Password Readable
+  - 4 MEDIUM: ESC8 (HTTP Enrollment) + LAPS Not Deployed + LAPS Legacy + ADCS Weak Permissions
+  - Analyse ADCS complète: Certificate Templates, Certificate Authorities, PKI objects
+  - Détection LAPS: déploiement, ACLs, migration legacy → Windows LAPS 2.0
 - v2.0.0: **MAJOR RELEASE** - Parser ACL complet + 12 nouvelles détections Phase 3 = **60 total (+161%)**
   - Implémentation parser Windows Security Descriptor (nTSecurityDescriptor binaire)
   - 2 CRITICAL: Shadow Credentials + RBCD
@@ -980,35 +1193,44 @@ Ces vulnérabilités sont mappées aux standards suivants:
 
 ---
 
-## 🚀 Roadmap (Fonctionnalités Premium Backend)
+## 🚀 Roadmap - Phases Futures
 
-Les vulnérabilités suivantes nécessitent une analyse ACL complexe et seront détectées par le **backend d'analyse premium** (via API fermée):
+**✅ Phase 3 (v2.0.0) - COMPLETE:** Parser ACL complet + 12 détections
+**✅ Phase 4 (v2.1.0) - COMPLETE:** ADCS/PKI (ESC1-8) + LAPS + 10 détections
 
-### ACL-Based Detections (nécessite parser LDAP ACL):
-1. **SHADOW_CREDENTIALS** - Exploitation de msDS-KeyCredentialLink (CRITICAL)
-2. **RBCD_ABUSE** - Resource-Based Constrained Delegation abuse (CRITICAL)
-3. **ACL_GENERICALL** - GenericAll sur objets sensibles (HIGH)
-4. **ACL_WRITEDACL** - WriteDACL sur objets sensibles (HIGH)
-5. **ACL_WRITEOWNER** - WriteOwner sur objets sensibles (HIGH)
-6. **ACL_FORCECHANGEPASSWORD** - ForceChangePassword abuse (MEDIUM)
-7. **ACL_GENERICWRITE** - GenericWrite sur objets sensibles (MEDIUM)
-8. **WRITESPN_ABUSE** - WriteSPN for targeted Kerberoasting (MEDIUM)
-9. **GPO_LINK_POISONING** - Weak ACLs on GPO links (MEDIUM)
+### Phase 5 - Potentielles Améliorations Futures:
 
-### Group Nesting Analysis:
-10. **DANGEROUS_GROUP_NESTING** - Nested groups leading to unintended privilege escalation (MEDIUM)
+**Trust & Cross-Forest Security:**
+- Trust SID filtering disabled
+- External trust vulnerabilities
+- Forest trust selective authentication
+- Cross-forest privilege escalation paths
 
-### AdminSDHolder:
-11. **ADMINSDHOLDER_BACKDOOR** - Modified AdminSDHolder ACL for persistence (MEDIUM)
+**DNS & Network Services:**
+- Insecure DNS zones (dynamic updates)
+- WPAD/LLMNR poisoning opportunities
+- DNS zone transfer vulnerabilities
 
-### Miscellaneous:
-12. **EVERYONE_IN_ACL** - Everyone/Authenticated Users with dangerous permissions (MEDIUM)
+**Extended ACL Rights (GUID-based):**
+- DS-Replication-Get-Changes (DCSync rights detection via ACL)
+- User-Force-Change-Password specific GUID
+- Self-Membership specific GUID
+- Extended rights abuse patterns
 
-### Analyse Multi-Pass (Premium)
-- **Pass 1**: Scoring par sévérité brute
-- **Pass 2**: Analyse contextuelle (Admin + Weak Crypto = 3× risque)
-- **Pass 3**: ML pattern matching (détection de chaînes d'attaque)
-- **Confidence Score**: Score de confiance pour chaque vulnérabilité
+**ADCS Remaining (ESC5, ESC7):**
+- ESC5: Vulnerable PKI AD object ACLs
+- ESC7: Vulnerable Certificate Authority ACL
+
+**Computer & Service Account Security:**
+- Stale computer accounts (>90 days inactive)
+- Service accounts without managed passwords (non-gMSA)
+- Computer objects with admin rights on other computers
+
+### Analyse Contextuelle Avancée:
+- **Correlation Engine**: Détection de chaînes d'attaque complètes (ex: ESC1 + WriteDACL Template = Full Domain Compromise Path)
+- **Risk Amplification**: Score multiplié si vulnérabilités combinées (Admin + Weak Crypto = 3× risque)
+- **Attack Path Visualization**: Graphe des chemins d'escalade de privilèges
+- **Confidence Scoring**: Score de confiance pour chaque détection (réduction false positives)
 
 ---
 

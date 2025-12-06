@@ -1,8 +1,10 @@
 # AD Collector API Guide
 
-## Version: 2.0.0
+## Version: 2.1.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
+
+**Phase 4 Complete:** 70 vulnerability types (ADCS/PKI ESC1-8 + LAPS) = +204% vs baseline
 
 ---
 
