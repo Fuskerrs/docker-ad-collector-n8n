@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "1.9.0-phase2",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - Phase 2: 48 vulnerabilities",
+  "version": "2.0.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - Phase 3 Complete: 60 vulnerabilities with full ACL parsing",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

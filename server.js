@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.9.0-phase2');
+console.log('AD Collector for n8n - v2.0.0');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -252,6 +252,126 @@ function formatDate(date) {
   return date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 }
 
+// Helper to parse Windows Security Descriptor (nTSecurityDescriptor)
+// Returns simplified ACL information for vulnerability detection
+function parseSecurityDescriptor(sdBuffer) {
+  if (!sdBuffer || !Buffer.isBuffer(sdBuffer)) {
+    return { aces: [], error: 'Invalid buffer' };
+  }
+
+  try {
+    // Security Descriptor structure (simplified):
+    // Offset 0: Revision (1 byte) - Should be 0x01
+    // Offset 1: Sbz1 (1 byte) - Reserved, should be 0x00
+    // Offset 2-3: Control flags (2 bytes, little-endian)
+    // Offset 4-7: Owner SID offset (4 bytes, little-endian)
+    // Offset 8-11: Group SID offset (4 bytes, little-endian)
+    // Offset 12-15: SACL offset (4 bytes, little-endian)
+    // Offset 16-19: DACL offset (4 bytes, little-endian)
+
+    const revision = sdBuffer.readUInt8(0);
+    if (revision !== 0x01) {
+      return { aces: [], error: `Unsupported revision: ${revision}` };
+    }
+
+    const daclOffset = sdBuffer.readUInt32LE(16);
+    if (daclOffset === 0 || daclOffset >= sdBuffer.length) {
+      return { aces: [], error: 'No DACL found' };
+    }
+
+    // Parse DACL
+    // DACL structure:
+    // Offset 0: AclRevision (1 byte)
+    // Offset 1: Sbz1 (1 byte)
+    // Offset 2-3: AclSize (2 bytes, little-endian)
+    // Offset 4-5: AceCount (2 bytes, little-endian)
+    // Offset 6-7: Sbz2 (2 bytes)
+    // Offset 8+: ACEs
+
+    const aclRevision = sdBuffer.readUInt8(daclOffset);
+    const aceCount = sdBuffer.readUInt16LE(daclOffset + 4);
+
+    const aces = [];
+    let aceOffset = daclOffset + 8; // Start of first ACE
+
+    for (let i = 0; i < aceCount && aceOffset < sdBuffer.length; i++) {
+      try {
+        // ACE structure (simplified):
+        // Offset 0: AceType (1 byte)
+        // Offset 1: AceFlags (1 byte)
+        // Offset 2-3: AceSize (2 bytes, little-endian)
+        // Offset 4-7: Access Mask (4 bytes, little-endian)
+        // Offset 8+: SID
+
+        const aceType = sdBuffer.readUInt8(aceOffset);
+        const aceFlags = sdBuffer.readUInt8(aceOffset + 1);
+        const aceSize = sdBuffer.readUInt16LE(aceOffset + 2);
+        const accessMask = sdBuffer.readUInt32LE(aceOffset + 4);
+
+        // Parse SID (simplified - just extract key parts)
+        const sidOffset = aceOffset + 8;
+        const sidRevision = sdBuffer.readUInt8(sidOffset);
+        const sidSubAuthorityCount = sdBuffer.readUInt8(sidOffset + 1);
+        const sidIdentifierAuthority = sdBuffer.readUIntBE(sidOffset + 2, 6);
+
+        // Read sub-authorities
+        let sid = `S-${sidRevision}-${sidIdentifierAuthority}`;
+        for (let j = 0; j < sidSubAuthorityCount && (sidOffset + 8 + j * 4) < sdBuffer.length; j++) {
+          const subAuth = sdBuffer.readUInt32LE(sidOffset + 8 + j * 4);
+          sid += `-${subAuth}`;
+        }
+
+        // Check for well-known SIDs and dangerous permissions
+        const isEveryone = sid === 'S-1-1-0';
+        const isAuthenticatedUsers = sid === 'S-1-5-11';
+        const isAnonymous = sid === 'S-1-5-7';
+
+        // Access Mask flags (from Windows SDK)
+        const GENERIC_ALL = 0x10000000;
+        const GENERIC_WRITE = 0x40000000;
+        const WRITE_DACL = 0x00040000;
+        const WRITE_OWNER = 0x00080000;
+        const CONTROL_ACCESS = 0x00000100; // ExtendedRight (includes ForceChangePassword)
+        const WRITE_PROPERTY = 0x00000020; // Includes WriteSPN
+
+        const hasGenericAll = (accessMask & GENERIC_ALL) !== 0;
+        const hasGenericWrite = (accessMask & GENERIC_WRITE) !== 0;
+        const hasWriteDACL = (accessMask & WRITE_DACL) !== 0;
+        const hasWriteOwner = (accessMask & WRITE_OWNER) !== 0;
+        const hasControlAccess = (accessMask & CONTROL_ACCESS) !== 0;
+        const hasWriteProperty = (accessMask & WRITE_PROPERTY) !== 0;
+
+        aces.push({
+          type: aceType,
+          flags: aceFlags,
+          accessMask: accessMask,
+          sid: sid,
+          isEveryone,
+          isAuthenticatedUsers,
+          isAnonymous,
+          permissions: {
+            genericAll: hasGenericAll,
+            genericWrite: hasGenericWrite,
+            writeDACL: hasWriteDACL,
+            writeOwner: hasWriteOwner,
+            controlAccess: hasControlAccess,
+            writeProperty: hasWriteProperty
+          }
+        });
+
+        aceOffset += aceSize;
+      } catch (e) {
+        // Skip malformed ACE
+        break;
+      }
+    }
+
+    return { aces, daclOffset, aceCount };
+  } catch (e) {
+    return { aces: [], error: e.message };
+  }
+}
+
 // Helper to extract detailed user attributes for audit results
 function getUserDetails(user) {
   const attrs = user.attributes || [];
@@ -290,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.9.0-phase2' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.0.0' });
 });
 
 // Test LDAP connection
@@ -1886,9 +2006,291 @@ app.post('/api/audit', authenticate, async (req, res) => {
         recommendation: 'Enable SMB signing and disable NTLM where possible'
       });
 
-      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 3+4)', { count: 2 });
+      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 2 partiel)', { count: 2 });
     } catch (e) {
       // Advanced checks failed
+    }
+    stepStart = Date.now();
+
+    // ==========================================
+    // STEP 13e: PHASE 3 - ACL & Advanced Checks
+    // ==========================================
+    try {
+      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse
+      try {
+        const shadowCredsAccounts = await searchMany(
+          '(msDS-KeyCredentialLink=*)',
+          ['sAMAccountName', 'msDS-KeyCredentialLink', 'userAccountControl'],
+          200
+        );
+
+        for (const account of shadowCredsAccounts) {
+          const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const keyCredLink = account.attributes.find(a => a.type === 'msDS-KeyCredentialLink')?.values || [];
+
+          if (keyCredLink.length > 0) {
+            findings.critical.push({
+              type: 'SHADOW_CREDENTIALS',
+              samAccountName: sam,
+              dn: account.objectName,
+              keyCount: keyCredLink.length,
+              message: 'Shadow Credentials configured (msDS-KeyCredentialLink) - Kerberos authentication bypass risk'
+            });
+          }
+        }
+      } catch (e) {}
+
+      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse
+      try {
+        const rbcdAccounts = await searchMany(
+          '(msDS-AllowedToActOnBehalfOfOtherIdentity=*)',
+          ['sAMAccountName', 'dNSHostName', 'msDS-AllowedToActOnBehalfOfOtherIdentity'],
+          200
+        );
+
+        for (const account of rbcdAccounts) {
+          const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = account.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+
+          findings.critical.push({
+            type: 'RBCD_ABUSE',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            dn: account.objectName,
+            message: 'Resource-Based Constrained Delegation configured - Potential privilege escalation'
+          });
+        }
+      } catch (e) {}
+
+      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation
+      try {
+        const nestedGroupIssues = [];
+        const sensitiveGroupNames = ['Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Administrators'];
+
+        for (const [groupName, members] of Object.entries(privilegedAccounts)) {
+          if (['domainAdmins', 'enterpriseAdmins', 'schemaAdmins', 'administrators'].includes(groupName)) {
+            // Check if any members are groups themselves
+            for (const member of members) {
+              const memberDn = member.dn || member;
+
+              // If it's a group (contains "CN=...") and not a user
+              if (memberDn.startsWith('CN=') && !memberDn.includes('CN=Users,')) {
+                // Check if this is a nested group
+                const isNestedGroup = allUsers.some(u => u.objectName === memberDn &&
+                  u.attributes.find(a => a.type === 'objectClass')?.values.includes('group'));
+
+                if (isNestedGroup) {
+                  findings.medium.push({
+                    type: 'DANGEROUS_GROUP_NESTING',
+                    parentGroup: groupName,
+                    nestedGroup: memberDn,
+                    message: `Nested group in ${groupName} - May grant unintended privileges`
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence
+      try {
+        const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
+        if (adminSDHolder) {
+          const whenChanged = adminSDHolder.attributes.find(a => a.type === 'whenChanged')?.values[0];
+          const whenCreated = adminSDHolder.attributes.find(a => a.type === 'whenCreated')?.values[0];
+
+          // If AdminSDHolder was modified recently (within last 90 days), flag it
+          if (whenChanged && whenCreated) {
+            const changedDate = new Date(whenChanged);
+            const createdDate = new Date(whenCreated);
+            const daysSinceChange = Math.floor((now - changedDate.getTime()) / (24 * 60 * 60 * 1000));
+            const daysSinceCreation = Math.floor((now - createdDate.getTime()) / (24 * 60 * 60 * 1000));
+
+            // If changed after creation and within last 90 days, might be backdoor
+            if (daysSinceChange < 90 && daysSinceChange < daysSinceCreation) {
+              findings.medium.push({
+                type: 'ADMINSDHOLDER_BACKDOOR',
+                dn: adminSDHolder.objectName,
+                whenChanged: whenChanged,
+                daysSinceChange: daysSinceChange,
+                message: 'AdminSDHolder modified recently - Potential ACL backdoor for persistence'
+              });
+            }
+          }
+        }
+      } catch (e) {}
+
+      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions
+      try {
+        // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
+        const sensitiveObjects = [];
+
+        // Add domain root
+        try {
+          const domainRoot = await searchOne('(objectClass=domain)');
+          if (domainRoot) sensitiveObjects.push({ obj: domainRoot, type: 'Domain Root' });
+        } catch (e) {}
+
+        // Add AdminSDHolder
+        try {
+          const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
+          if (adminSDHolder) sensitiveObjects.push({ obj: adminSDHolder, type: 'AdminSDHolder' });
+        } catch (e) {}
+
+        // Add Domain Admins group
+        try {
+          const domainAdminsGroup = await searchOne('(cn=Domain Admins)');
+          if (domainAdminsGroup) sensitiveObjects.push({ obj: domainAdminsGroup, type: 'Domain Admins Group' });
+        } catch (e) {}
+
+        // Add Enterprise Admins group
+        try {
+          const enterpriseAdminsGroup = await searchOne('(cn=Enterprise Admins)');
+          if (enterpriseAdminsGroup) sensitiveObjects.push({ obj: enterpriseAdminsGroup, type: 'Enterprise Admins Group' });
+        } catch (e) {}
+
+        // Analyze ACLs on sensitive objects
+        for (const { obj, type } of sensitiveObjects) {
+          try {
+            const ntSecDesc = obj.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+            if (!ntSecDesc) continue;
+
+            // Convert to Buffer if needed
+            const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+            const aclData = parseSecurityDescriptor(sdBuffer);
+
+            if (aclData.error || !aclData.aces || aclData.aces.length === 0) continue;
+
+            // Check each ACE for dangerous permissions
+            for (const ace of aclData.aces) {
+              const targetDn = obj.objectName;
+
+              // ACL_GENERICALL (070 - HIGH) - GenericAll on sensitive objects
+              if (ace.permissions.genericAll && !ace.sid.includes('S-1-5-32-544')) { // Exclude BUILTIN\Administrators
+                findings.high.push({
+                  type: 'ACL_GENERICALL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `GenericAll permission on ${type} - Full control abuse risk`
+                });
+              }
+
+              // ACL_WRITEDACL (071 - HIGH) - WriteDACL on sensitive objects
+              if (ace.permissions.writeDACL && !ace.sid.includes('S-1-5-32-544')) {
+                findings.high.push({
+                  type: 'ACL_WRITEDACL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteDACL permission on ${type} - ACL modification risk`
+                });
+              }
+
+              // ACL_WRITEOWNER (072 - HIGH) - WriteOwner on sensitive objects
+              if (ace.permissions.writeOwner && !ace.sid.includes('S-1-5-32-544')) {
+                findings.high.push({
+                  type: 'ACL_WRITEOWNER',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteOwner permission on ${type} - Ownership takeover risk`
+                });
+              }
+
+              // EVERYONE_IN_ACL (073 - MEDIUM) - Everyone/Authenticated Users with dangerous permissions
+              if ((ace.isEveryone || ace.isAuthenticatedUsers) &&
+                  (ace.permissions.genericAll || ace.permissions.genericWrite ||
+                   ace.permissions.writeDACL || ace.permissions.writeOwner)) {
+                findings.medium.push({
+                  type: 'EVERYONE_IN_ACL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                  permissions: Object.keys(ace.permissions).filter(k => ace.permissions[k]).join(', '),
+                  message: `${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} has dangerous permissions on ${type}`
+                });
+              }
+
+              // ACL_GENERICWRITE (074 - MEDIUM) - GenericWrite on sensitive objects
+              if (ace.permissions.genericWrite && !ace.sid.includes('S-1-5-32-544')) {
+                findings.medium.push({
+                  type: 'ACL_GENERICWRITE',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `GenericWrite permission on ${type} - Attribute modification risk`
+                });
+              }
+
+              // ACL_FORCECHANGEPASSWORD (075 - MEDIUM) - ControlAccess (ExtendedRight) for password reset
+              if (ace.permissions.controlAccess && type.includes('Domain Admins')) {
+                findings.medium.push({
+                  type: 'ACL_FORCECHANGEPASSWORD',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `Extended rights on ${type} - Potential password reset abuse`
+                });
+              }
+
+              // WRITESPN_ABUSE (076 - MEDIUM) - WriteProperty for targeted Kerberoasting
+              if (ace.permissions.writeProperty && type.includes('Domain')) {
+                findings.medium.push({
+                  type: 'WRITESPN_ABUSE',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteProperty permission on ${type} - WriteSPN for targeted Kerberoasting`
+                });
+              }
+            }
+          } catch (e) {
+            // Failed to parse ACL for this object
+          }
+        }
+
+        // GPO_LINK_POISONING (077 - MEDIUM) - Weak ACLs on GPO links
+        try {
+          const gpos = await searchMany('(objectClass=groupPolicyContainer)', ['displayName', 'nTSecurityDescriptor'], 50);
+
+          for (const gpo of gpos) {
+            const displayName = gpo.attributes.find(a => a.type === 'displayName')?.values[0] || 'Unknown GPO';
+            const ntSecDesc = gpo.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+            if (ntSecDesc) {
+              const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+              const aclData = parseSecurityDescriptor(sdBuffer);
+
+              if (aclData.aces) {
+                for (const ace of aclData.aces) {
+                  // Check if non-admin has write access to GPO
+                  if ((ace.permissions.genericAll || ace.permissions.genericWrite || ace.permissions.writeDACL) &&
+                      (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                    findings.medium.push({
+                      type: 'GPO_LINK_POISONING',
+                      gpoName: displayName,
+                      gpoDn: gpo.objectName,
+                      trusteeSid: ace.sid,
+                      trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                      message: `Weak ACL on GPO "${displayName}" - GPO modification risk`
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {}
+
+      } catch (e) {
+        // ACL analysis failed
+      }
+
+      trackStep('STEP_13e_PHASE3', 'Phase 3 security checks (ACL + Advanced)', { count: 12 });
+    } catch (e) {
+      // Phase 3 checks failed
     }
     stepStart = Date.now();
 
@@ -2998,9 +3400,291 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         recommendation: 'Enable SMB signing and disable NTLM where possible'
       });
 
-      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 3+4)', { count: 2 });
+      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 2 partiel)', { count: 2 });
     } catch (e) {
       // Advanced checks failed
+    }
+    stepStart = Date.now();
+
+    // ==========================================
+    // STEP 13e: PHASE 3 - ACL & Advanced Checks
+    // ==========================================
+    try {
+      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse
+      try {
+        const shadowCredsAccounts = await searchMany(
+          '(msDS-KeyCredentialLink=*)',
+          ['sAMAccountName', 'msDS-KeyCredentialLink', 'userAccountControl'],
+          200
+        );
+
+        for (const account of shadowCredsAccounts) {
+          const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const keyCredLink = account.attributes.find(a => a.type === 'msDS-KeyCredentialLink')?.values || [];
+
+          if (keyCredLink.length > 0) {
+            findings.critical.push({
+              type: 'SHADOW_CREDENTIALS',
+              samAccountName: sam,
+              dn: account.objectName,
+              keyCount: keyCredLink.length,
+              message: 'Shadow Credentials configured (msDS-KeyCredentialLink) - Kerberos authentication bypass risk'
+            });
+          }
+        }
+      } catch (e) {}
+
+      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse
+      try {
+        const rbcdAccounts = await searchMany(
+          '(msDS-AllowedToActOnBehalfOfOtherIdentity=*)',
+          ['sAMAccountName', 'dNSHostName', 'msDS-AllowedToActOnBehalfOfOtherIdentity'],
+          200
+        );
+
+        for (const account of rbcdAccounts) {
+          const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = account.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+
+          findings.critical.push({
+            type: 'RBCD_ABUSE',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            dn: account.objectName,
+            message: 'Resource-Based Constrained Delegation configured - Potential privilege escalation'
+          });
+        }
+      } catch (e) {}
+
+      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation
+      try {
+        const nestedGroupIssues = [];
+        const sensitiveGroupNames = ['Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Administrators'];
+
+        for (const [groupName, members] of Object.entries(privilegedAccounts)) {
+          if (['domainAdmins', 'enterpriseAdmins', 'schemaAdmins', 'administrators'].includes(groupName)) {
+            // Check if any members are groups themselves
+            for (const member of members) {
+              const memberDn = member.dn || member;
+
+              // If it's a group (contains "CN=...") and not a user
+              if (memberDn.startsWith('CN=') && !memberDn.includes('CN=Users,')) {
+                // Check if this is a nested group
+                const isNestedGroup = allUsers.some(u => u.objectName === memberDn &&
+                  u.attributes.find(a => a.type === 'objectClass')?.values.includes('group'));
+
+                if (isNestedGroup) {
+                  findings.medium.push({
+                    type: 'DANGEROUS_GROUP_NESTING',
+                    parentGroup: groupName,
+                    nestedGroup: memberDn,
+                    message: `Nested group in ${groupName} - May grant unintended privileges`
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence
+      try {
+        const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
+        if (adminSDHolder) {
+          const whenChanged = adminSDHolder.attributes.find(a => a.type === 'whenChanged')?.values[0];
+          const whenCreated = adminSDHolder.attributes.find(a => a.type === 'whenCreated')?.values[0];
+
+          // If AdminSDHolder was modified recently (within last 90 days), flag it
+          if (whenChanged && whenCreated) {
+            const changedDate = new Date(whenChanged);
+            const createdDate = new Date(whenCreated);
+            const daysSinceChange = Math.floor((now - changedDate.getTime()) / (24 * 60 * 60 * 1000));
+            const daysSinceCreation = Math.floor((now - createdDate.getTime()) / (24 * 60 * 60 * 1000));
+
+            // If changed after creation and within last 90 days, might be backdoor
+            if (daysSinceChange < 90 && daysSinceChange < daysSinceCreation) {
+              findings.medium.push({
+                type: 'ADMINSDHOLDER_BACKDOOR',
+                dn: adminSDHolder.objectName,
+                whenChanged: whenChanged,
+                daysSinceChange: daysSinceChange,
+                message: 'AdminSDHolder modified recently - Potential ACL backdoor for persistence'
+              });
+            }
+          }
+        }
+      } catch (e) {}
+
+      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions
+      try {
+        // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
+        const sensitiveObjects = [];
+
+        // Add domain root
+        try {
+          const domainRoot = await searchOne('(objectClass=domain)');
+          if (domainRoot) sensitiveObjects.push({ obj: domainRoot, type: 'Domain Root' });
+        } catch (e) {}
+
+        // Add AdminSDHolder
+        try {
+          const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
+          if (adminSDHolder) sensitiveObjects.push({ obj: adminSDHolder, type: 'AdminSDHolder' });
+        } catch (e) {}
+
+        // Add Domain Admins group
+        try {
+          const domainAdminsGroup = await searchOne('(cn=Domain Admins)');
+          if (domainAdminsGroup) sensitiveObjects.push({ obj: domainAdminsGroup, type: 'Domain Admins Group' });
+        } catch (e) {}
+
+        // Add Enterprise Admins group
+        try {
+          const enterpriseAdminsGroup = await searchOne('(cn=Enterprise Admins)');
+          if (enterpriseAdminsGroup) sensitiveObjects.push({ obj: enterpriseAdminsGroup, type: 'Enterprise Admins Group' });
+        } catch (e) {}
+
+        // Analyze ACLs on sensitive objects
+        for (const { obj, type } of sensitiveObjects) {
+          try {
+            const ntSecDesc = obj.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+            if (!ntSecDesc) continue;
+
+            // Convert to Buffer if needed
+            const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+            const aclData = parseSecurityDescriptor(sdBuffer);
+
+            if (aclData.error || !aclData.aces || aclData.aces.length === 0) continue;
+
+            // Check each ACE for dangerous permissions
+            for (const ace of aclData.aces) {
+              const targetDn = obj.objectName;
+
+              // ACL_GENERICALL (070 - HIGH) - GenericAll on sensitive objects
+              if (ace.permissions.genericAll && !ace.sid.includes('S-1-5-32-544')) { // Exclude BUILTIN\Administrators
+                findings.high.push({
+                  type: 'ACL_GENERICALL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `GenericAll permission on ${type} - Full control abuse risk`
+                });
+              }
+
+              // ACL_WRITEDACL (071 - HIGH) - WriteDACL on sensitive objects
+              if (ace.permissions.writeDACL && !ace.sid.includes('S-1-5-32-544')) {
+                findings.high.push({
+                  type: 'ACL_WRITEDACL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteDACL permission on ${type} - ACL modification risk`
+                });
+              }
+
+              // ACL_WRITEOWNER (072 - HIGH) - WriteOwner on sensitive objects
+              if (ace.permissions.writeOwner && !ace.sid.includes('S-1-5-32-544')) {
+                findings.high.push({
+                  type: 'ACL_WRITEOWNER',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteOwner permission on ${type} - Ownership takeover risk`
+                });
+              }
+
+              // EVERYONE_IN_ACL (073 - MEDIUM) - Everyone/Authenticated Users with dangerous permissions
+              if ((ace.isEveryone || ace.isAuthenticatedUsers) &&
+                  (ace.permissions.genericAll || ace.permissions.genericWrite ||
+                   ace.permissions.writeDACL || ace.permissions.writeOwner)) {
+                findings.medium.push({
+                  type: 'EVERYONE_IN_ACL',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                  permissions: Object.keys(ace.permissions).filter(k => ace.permissions[k]).join(', '),
+                  message: `${ace.isEveryone ? 'Everyone' : 'Authenticated Users'} has dangerous permissions on ${type}`
+                });
+              }
+
+              // ACL_GENERICWRITE (074 - MEDIUM) - GenericWrite on sensitive objects
+              if (ace.permissions.genericWrite && !ace.sid.includes('S-1-5-32-544')) {
+                findings.medium.push({
+                  type: 'ACL_GENERICWRITE',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `GenericWrite permission on ${type} - Attribute modification risk`
+                });
+              }
+
+              // ACL_FORCECHANGEPASSWORD (075 - MEDIUM) - ControlAccess (ExtendedRight) for password reset
+              if (ace.permissions.controlAccess && type.includes('Domain Admins')) {
+                findings.medium.push({
+                  type: 'ACL_FORCECHANGEPASSWORD',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `Extended rights on ${type} - Potential password reset abuse`
+                });
+              }
+
+              // WRITESPN_ABUSE (076 - MEDIUM) - WriteProperty for targeted Kerberoasting
+              if (ace.permissions.writeProperty && type.includes('Domain')) {
+                findings.medium.push({
+                  type: 'WRITESPN_ABUSE',
+                  targetObject: type,
+                  targetDn: targetDn,
+                  trusteeSid: ace.sid,
+                  message: `WriteProperty permission on ${type} - WriteSPN for targeted Kerberoasting`
+                });
+              }
+            }
+          } catch (e) {
+            // Failed to parse ACL for this object
+          }
+        }
+
+        // GPO_LINK_POISONING (077 - MEDIUM) - Weak ACLs on GPO links
+        try {
+          const gpos = await searchMany('(objectClass=groupPolicyContainer)', ['displayName', 'nTSecurityDescriptor'], 50);
+
+          for (const gpo of gpos) {
+            const displayName = gpo.attributes.find(a => a.type === 'displayName')?.values[0] || 'Unknown GPO';
+            const ntSecDesc = gpo.attributes.find(a => a.type === 'nTSecurityDescriptor')?.values[0];
+
+            if (ntSecDesc) {
+              const sdBuffer = Buffer.isBuffer(ntSecDesc) ? ntSecDesc : Buffer.from(ntSecDesc);
+              const aclData = parseSecurityDescriptor(sdBuffer);
+
+              if (aclData.aces) {
+                for (const ace of aclData.aces) {
+                  // Check if non-admin has write access to GPO
+                  if ((ace.permissions.genericAll || ace.permissions.genericWrite || ace.permissions.writeDACL) &&
+                      (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                    findings.medium.push({
+                      type: 'GPO_LINK_POISONING',
+                      gpoName: displayName,
+                      gpoDn: gpo.objectName,
+                      trusteeSid: ace.sid,
+                      trusteeType: ace.isEveryone ? 'Everyone' : 'Authenticated Users',
+                      message: `Weak ACL on GPO "${displayName}" - GPO modification risk`
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {}
+
+      } catch (e) {
+        // ACL analysis failed
+      }
+
+      trackStep('STEP_13e_PHASE3', 'Phase 3 security checks (ACL + Advanced)', { count: 12 });
+    } catch (e) {
+      // Phase 3 checks failed
     }
     stepStart = Date.now();
 
