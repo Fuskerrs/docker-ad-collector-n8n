@@ -410,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.0' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.1' });
 });
 
 // Test LDAP connection
