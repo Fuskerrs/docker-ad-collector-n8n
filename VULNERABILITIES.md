@@ -2,22 +2,23 @@
 
 ## Vue d'ensemble
 
-Le collecteur AD détecte actuellement **48 types de vulnérabilités** répartis en 4 niveaux de sévérité.
+Le collecteur AD détecte actuellement **60 types de vulnérabilités** répartis en 4 niveaux de sévérité.
 
 **Statistiques:**
-- 🔴 **Critique**: 8 vulnérabilités
-- 🟠 **High**: 15 vulnérabilités
-- 🟡 **Medium**: 21 vulnérabilités
+- 🔴 **Critique**: 10 vulnérabilités
+- 🟠 **High**: 18 vulnérabilités
+- 🟡 **Medium**: 28 vulnérabilités
 - 🔵 **Low**: 4 vulnérabilités
 
 **Évolution:**
 - v1.7.5: 23 vulnérabilités (baseline)
 - v1.8.0-phase1: 33 vulnérabilités (+10)
-- v1.9.0-phase2: **48 vulnérabilités (+25)** = **+108% d'amélioration**
+- v1.9.0-phase2: 48 vulnérabilités (+25)
+- v2.0.0: **60 vulnérabilités (+12)** = **+161% d'amélioration totale**
 
 ---
 
-## 🔴 CRITICAL - Vulnérabilités Critiques (8)
+## 🔴 CRITICAL - Vulnérabilités Critiques (10)
 
 ### 1. PASSWORD_NOT_REQUIRED
 **Description:** Compte utilisateur ne nécessitant pas de mot de passe (UAC flag 0x20)
@@ -159,7 +160,47 @@ Set-ADUser -Identity admin_username -AccountNotDelegated $true
 
 ---
 
-## 🟠 HIGH - Vulnérabilités Importantes (15)
+### 10. SHADOW_CREDENTIALS **[NEW Phase 3]**
+**Description:** Attribut msDS-KeyCredentialLink configuré (Shadow Credentials attack)
+
+**Impact:** Permet de contourner l'authentification Kerberos en ajoutant des clés publiques arbitraires
+
+**Détection:** Présence de `msDS-KeyCredentialLink`
+
+**Référence:** [Shadow Credentials Attack](https://posts.specterops.io/shadow-credentials-abusing-key-trust-account-mapping-for-takeover-8ee1a53566ab)
+
+**Remédiation:**
+```powershell
+# Vérifier l'attribut:
+Get-ADUser -Identity username -Properties msDS-KeyCredentialLink | Select-Object -ExpandProperty msDS-KeyCredentialLink
+
+# Supprimer si non légitime:
+Set-ADUser -Identity username -Clear msDS-KeyCredentialLink
+```
+
+---
+
+### 11. RBCD_ABUSE **[NEW Phase 3]**
+**Description:** Attribut msDS-AllowedToActOnBehalfOfOtherIdentity configuré (Resource-Based Constrained Delegation)
+
+**Impact:** Permet l'élévation de privilèges via la délégation basée sur les ressources
+
+**Détection:** Présence de `msDS-AllowedToActOnBehalfOfOtherIdentity`
+
+**Référence:** [MITRE ATT&CK T1134](https://attack.mitre.org/techniques/T1134/)
+
+**Remédiation:**
+```powershell
+# Vérifier l'attribut:
+Get-ADComputer -Identity computername -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+
+# Supprimer si non nécessaire:
+Set-ADComputer -Identity computername -Clear msDS-AllowedToActOnBehalfOfOtherIdentity
+```
+
+---
+
+## 🟠 HIGH - Vulnérabilités Importantes (18)
 
 ### 10. KERBEROASTING_RISK
 **Description:** Compte utilisateur avec Service Principal Name (SPN) configuré
@@ -380,7 +421,67 @@ Set-ADDomain -Identity "DC=domain,DC=com" -Replace @{"ms-DS-MachineAccountQuota"
 
 ---
 
-## 🟡 MEDIUM - Vulnérabilités Moyennes (21)
+### 25. ACL_GENERICALL **[NEW Phase 3]**
+**Description:** Permission GenericAll sur objets sensibles (Domain Root, AdminSDHolder, groupes admin)
+
+**Impact:** Contrôle total sur l'objet cible, permet toutes les modifications
+
+**Détection:** Analyse ACL `nTSecurityDescriptor` avec masque d'accès GENERIC_ALL (0x10000000)
+
+**Référence:** [GenericAll Abuse](https://book.hacktricks.xyz/windows-hardening/active-directory-methodology/acl-persistence-abuse)
+
+**Remédiation:**
+```powershell
+# Auditer les ACLs:
+(Get-ACL "AD:\CN=AdminSDHolder,CN=System,DC=domain,DC=com").Access | Where-Object {$_.ActiveDirectoryRights -like "*GenericAll*"}
+
+# Supprimer l'ACE malveillante (adapter le SID):
+dsacls "CN=AdminSDHolder,CN=System,DC=domain,DC=com" /R "DOMAIN\user"
+```
+
+---
+
+### 26. ACL_WRITEDACL **[NEW Phase 3]**
+**Description:** Permission WriteDACL sur objets sensibles
+
+**Impact:** Peut modifier les ACLs de l'objet pour s'accorder des permissions supplémentaires
+
+**Détection:** Analyse ACL avec masque d'accès WRITE_DACL (0x00040000)
+
+**Référence:** [WriteDACL Abuse](https://bloodhound.readthedocs.io/en/latest/data-analysis/edges.html#writedacl)
+
+**Remédiation:**
+```powershell
+# Identifier les permissions WriteDACL:
+(Get-ACL "AD:\CN=Domain Admins,CN=Users,DC=domain,DC=com").Access | Where-Object {$_.ActiveDirectoryRights -like "*WriteDacl*"}
+
+# Révoquer:
+dsacls "CN=Domain Admins,CN=Users,DC=domain,DC=com" /R "DOMAIN\user"
+```
+
+---
+
+### 27. ACL_WRITEOWNER **[NEW Phase 3]**
+**Description:** Permission WriteOwner sur objets sensibles
+
+**Impact:** Peut changer le propriétaire de l'objet et ainsi prendre le contrôle total
+
+**Détection:** Analyse ACL avec masque d'accès WRITE_OWNER (0x00080000)
+
+**Référence:** [WriteOwner Abuse](https://bloodhound.readthedocs.io/en/latest/data-analysis/edges.html#writeowner)
+
+**Remédiation:**
+```powershell
+# Identifier WriteOwner:
+(Get-ACL "AD:\DC=domain,DC=com").Access | Where-Object {$_.ActiveDirectoryRights -like "*WriteOwner*"}
+
+# Révoquer:
+dsacls "DC=domain,DC=com" /R "DOMAIN\user"
+```
+
+---
+
+## 🟡 MEDIUM - Vulnérabilités Moyennes (28)
 
 ### 25. PASSWORD_VERY_OLD
 **Description:** Mot de passe non changé depuis plus d'un an (365 jours)
@@ -669,6 +770,37 @@ Set-ADUser -Identity username -Replace @{primaryGroupID=513}  # 513 = Domain Use
 
 ---
 
+### 46-52. Phase 3 ACL & Group Analysis **[NEW Phase 3]**
+
+Les vulnérabilités suivantes utilisent le parser ACL complet pour détecter les permissions dangereuses:
+
+- **DANGEROUS_GROUP_NESTING**: Groupes imbriqués dans Domain/Enterprise Admins (escalade de privilèges involontaire)
+- **ADMINSDHOLDER_BACKDOOR**: AdminSDHolder modifié récemment (<90 jours, backdoor ACL persistence)
+- **EVERYONE_IN_ACL**: Everyone/Authenticated Users avec GenericAll/WriteDACL/WriteOwner sur objets sensibles
+- **ACL_GENERICWRITE**: GenericWrite sur objets sensibles (modification d'attributs)
+- **ACL_FORCECHANGEPASSWORD**: ControlAccess/ExtendedRight sur groupes admin (reset password abuse)
+- **WRITESPN_ABUSE**: WriteProperty pour targeted Kerberoasting (ajout SPN malveillant)
+- **GPO_LINK_POISONING**: ACLs faibles sur GPOs (Everyone/Auth Users avec GenericAll/GenericWrite)
+
+**Référence globale:** [BloodHound ACL Attacks](https://bloodhound.readthedocs.io/en/latest/data-analysis/edges.html)
+
+**Remédiation générale:**
+```powershell
+# Auditer les ACLs d'un objet sensible:
+(Get-ACL "AD:\CN=Domain Admins,CN=Users,DC=domain,DC=com").Access
+
+# Révoquer une ACE dangereuse:
+dsacls "CN=Domain Admins,CN=Users,DC=domain,DC=com" /R "DOMAIN\user"
+
+# Vérifier les groupes imbriqués:
+Get-ADGroupMember "Domain Admins" -Recursive | Where-Object {$_.objectClass -eq 'group'}
+
+# Vérifier AdminSDHolder:
+Get-ADObject -Filter {adminCount -eq 1 -and isCriticalSystemObject -ne $true}
+```
+
+---
+
 ## 🔵 LOW - Vulnérabilités Mineures (4)
 
 ### 46. TEST_ACCOUNT
@@ -772,11 +904,11 @@ Set-ADUser -Identity username -ServicePrincipalName @{Remove='HTTP/duplicate.spn
 
 | Sévérité | Nombre | Évolution | Exemples |
 |----------|--------|-----------|----------|
-| 🔴 Critical | 8 | +1 | AS-REP Roasting, Unconstrained Delegation, DES Encryption, Golden Ticket |
-| 🟠 High | 15 | +6 | Kerberoasting, DNS Admins, DCSync Rights, Backup Operators |
-| 🟡 Medium | 21 | +15 | Password Policy, LAPS Leak, FSP, PrimaryGroupID Spoofing |
-| 🔵 Low | 4 | +3 | Test accounts, Weak Kerberos, Duplicate SPN, NTLM Relay |
-| **TOTAL** | **48** | **+25** | **+108% vs v1.7.5** |
+| 🔴 Critical | 10 | +2 | AS-REP Roasting, Golden Ticket, Shadow Credentials, RBCD |
+| 🟠 High | 18 | +3 | Kerberoasting, Backup Operators, ACL GenericAll/WriteDACL/WriteOwner |
+| 🟡 Medium | 28 | +7 | Password Policy, ACL abuse, Group Nesting, AdminSDHolder Backdoor |
+| 🔵 Low | 4 | - | Test accounts, Weak Kerberos, Duplicate SPN, NTLM Relay |
+| **TOTAL** | **60** | **+12** | **+161% vs v1.7.5 (Phase 3 Complete!)** |
 
 ---
 
@@ -830,10 +962,15 @@ Ces vulnérabilités sont mappées aux standards suivants:
 
 ## 📝 Notes de Version
 
-**Version actuelle du collecteur:** v1.9.0-phase2
+**Version actuelle du collecteur:** v2.0.0
 
 **Changelog:**
-- v1.9.0-phase2: +25 vulnérabilités (Phase 2: domain config + Phase 3/4: 2 simple checks) = **48 total**
+- v2.0.0: **MAJOR RELEASE** - Parser ACL complet + 12 nouvelles détections Phase 3 = **60 total (+161%)**
+  - Implémentation parser Windows Security Descriptor (nTSecurityDescriptor binaire)
+  - 2 CRITICAL: Shadow Credentials + RBCD
+  - 3 HIGH: ACL GenericAll/WriteDACL/WriteOwner
+  - 7 MEDIUM: Group Nesting, AdminSDHolder, Everyone in ACL, ACL abuse, GPO poisoning
+- v1.9.0-phase2: +25 vulnérabilités (Phase 2: domain config + Phase 3/4: 2 simple checks) = 48 total
 - v1.8.0-phase1: +10 vulnérabilités (group membership + UAC flags) = 33 total
 - v1.7.5: Fix SSE complete event flush delay
 - v1.7.4: Ajout détection OVERSIZED_GROUP

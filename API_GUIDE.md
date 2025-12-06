@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.9.0-phase2
+## Version: 2.0.0
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -750,9 +750,9 @@ The audit executes in 15 logical steps, each with a specific code:
 
 ### Security Findings Categories
 
-**Total: 48 vulnerability types** (v1.7.5: 23 → v1.9.0-phase2: 48 = **+108%**)
+**Total: 60 vulnerability types** (v1.7.5: 23 → v2.0.0: 60 = **+161%**)
 
-**🔴 Critical Findings (8):**
+**🔴 Critical Findings (10):**
 - `PASSWORD_NOT_REQUIRED` - Account with no password required (UAC 0x20)
 - `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption (UAC 0x80)
 - `ASREP_ROASTING_RISK` - Account vulnerable to AS-REP roasting (UAC 0x400000)
@@ -761,9 +761,11 @@ The audit executes in 15 logical steps, each with a specific code:
 - `UNIX_USER_PASSWORD` - Unix password attribute set (plaintext password risk)
 - `WEAK_ENCRYPTION_DES` - Account configured for DES Kerberos encryption (msDS-SupportedEncryptionTypes)
 - `SENSITIVE_DELEGATION` - Privileged account (adminCount=1) with delegation enabled
-- `GOLDEN_TICKET_RISK` - **[NEW Phase 2]** krbtgt password age > 180 days (Golden Ticket persistence risk)
+- `GOLDEN_TICKET_RISK` - **[Phase 2]** krbtgt password age > 180 days (Golden Ticket persistence risk)
+- `SHADOW_CREDENTIALS` - **[NEW Phase 3]** msDS-KeyCredentialLink abuse for Kerberos bypass
+- `RBCD_ABUSE` - **[NEW Phase 3]** Resource-Based Constrained Delegation privilege escalation
 
-**🟠 High Findings (15):**
+**🟠 High Findings (18):**
 - `KERBEROASTING_RISK` - Account with SPN (Kerberoasting vulnerable)
 - `CONSTRAINED_DELEGATION` - Account with constrained delegation (msDS-AllowedToDelegateTo)
 - `SID_HISTORY` - SID History attribute populated (privilege escalation risk)
@@ -777,10 +779,13 @@ The audit executes in 15 logical steps, each with a specific code:
 - `ACCOUNT_OPERATORS_MEMBER` - **[Phase 1]** Member of Account Operators (can create accounts)
 - `SERVER_OPERATORS_MEMBER` - **[Phase 1]** Member of Server Operators (RCE via services)
 - `PRINT_OPERATORS_MEMBER` - **[Phase 1]** Member of Print Operators (SYSTEM escalation)
-- `COMPUTER_UNCONSTRAINED_DELEGATION` - **[NEW Phase 2]** Computer with unconstrained delegation (TGT capture risk)
-- `MACHINE_ACCOUNT_QUOTA_ABUSE` - **[NEW Phase 2]** ms-DS-MachineAccountQuota > 0 (default join abuse)
+- `COMPUTER_UNCONSTRAINED_DELEGATION` - **[Phase 2]** Computer with unconstrained delegation (TGT capture risk)
+- `MACHINE_ACCOUNT_QUOTA_ABUSE` - **[Phase 2]** ms-DS-MachineAccountQuota > 0 (default join abuse)
+- `ACL_GENERICALL` - **[NEW Phase 3]** GenericAll permission on sensitive objects (full control)
+- `ACL_WRITEDACL` - **[NEW Phase 3]** WriteDACL permission (ACL modification attack)
+- `ACL_WRITEOWNER` - **[NEW Phase 3]** WriteOwner permission (ownership takeover)
 
-**🟡 Medium Findings (21):**
+**🟡 Medium Findings (28):**
 - `PASSWORD_VERY_OLD` - Password older than 1 year (pwdLastSet > 365 days)
 - `INACTIVE_365_DAYS` - Account inactive for 365+ days
 - `SHARED_ACCOUNT` - Possible shared account (samAccountName pattern)
@@ -799,17 +804,24 @@ The audit executes in 15 logical steps, each with a specific code:
 - `DANGEROUS_LOGON_SCRIPTS` - **[NEW Phase 2]** scriptPath attribute set (logon script abuse)
 - `PRE_WINDOWS_2000_ACCESS` - **[NEW Phase 2]** Everyone/Authenticated Users in Pre-Win2K group
 - `EXPIRED_ACCOUNT_IN_ADMIN_GROUP` - **[NEW Phase 2]** Expired account in admin groups
-- `DISABLED_ACCOUNT_IN_ADMIN_GROUP` - **[NEW Phase 2]** Disabled account in admin groups
-- `PRIMARYGROUPID_SPOOFING` - **[NEW Phase 2]** primaryGroupID=512 without Domain Admins memberOf (hidden membership)
-- `FOREIGN_SECURITY_PRINCIPALS` - **[NEW Phase 2]** Cross-forest principals in sensitive groups
+- `DISABLED_ACCOUNT_IN_ADMIN_GROUP` - **[Phase 2]** Disabled account in admin groups
+- `PRIMARYGROUPID_SPOOFING` - **[Phase 2]** primaryGroupID=512 without Domain Admins memberOf (hidden membership)
+- `FOREIGN_SECURITY_PRINCIPALS` - **[Phase 2]** Cross-forest principals in sensitive groups
+- `DANGEROUS_GROUP_NESTING` - **[NEW Phase 3]** Nested groups in Domain/Enterprise Admins
+- `ADMINSDHOLDER_BACKDOOR` - **[NEW Phase 3]** AdminSDHolder recently modified (persistence backdoor)
+- `EVERYONE_IN_ACL` - **[NEW Phase 3]** Everyone/Auth Users with dangerous ACL permissions
+- `ACL_GENERICWRITE` - **[NEW Phase 3]** GenericWrite permission on sensitive objects
+- `ACL_FORCECHANGEPASSWORD` - **[NEW Phase 3]** ControlAccess for password reset abuse
+- `WRITESPN_ABUSE` - **[NEW Phase 3]** WriteProperty for targeted Kerberoasting
+- `GPO_LINK_POISONING` - **[NEW Phase 3]** Weak ACLs on Group Policy Objects
 
 **🔵 Low Findings (4):**
 - `TEST_ACCOUNT` - Possible test account (samAccountName pattern)
 - `USER_CANNOT_CHANGE_PASSWORD` - **[Phase 1]** User cannot change password (UAC 0x40)
 - `SMARTCARD_NOT_REQUIRED` - **[Phase 1]** Privileged account without smartcard requirement (UAC 0x40000)
-- `WEAK_KERBEROS_POLICY` - **[NEW Phase 2]** Kerberos policy weak (maxTicketAge > 10 hours)
-- `DUPLICATE_SPN` - **[NEW Phase 2]** Same SPN on multiple accounts (Kerberos auth issues)
-- `NTLM_RELAY_OPPORTUNITY` - **[NEW Phase 2]** NTLM enabled (informational - relay attack risk)
+- `WEAK_KERBEROS_POLICY` - **[Phase 2]** Kerberos policy weak (maxTicketAge > 10 hours)
+- `DUPLICATE_SPN` - **[Phase 2]** Same SPN on multiple accounts (Kerberos auth issues)
+- `NTLM_RELAY_OPPORTUNITY` - **[Phase 2]** NTLM enabled (informational - relay attack risk)
 
 **ℹ️ Info Findings:**
 - `PRIVILEGED_GROUP_DOMAINADMINS` - Domain Admins group member count
