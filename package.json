@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.1.1",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.1: Granular SSE logging (70 steps) for better audit visibility",
+  "version": "2.1.2",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.2: Fixed SSE step naming (STEP_69/70) for complete 70-step audit stream",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

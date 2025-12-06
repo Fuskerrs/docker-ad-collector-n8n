@@ -410,7 +410,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.1' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '2.1.2' });
 });
 
 // Test LDAP connection
@@ -4395,7 +4395,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     const directPenalty = Math.floor((findings.critical.length * 0.3) + (findings.high.length * 0.1));
     riskScore.score = Math.max(0, Math.min(100, 100 - percentageDeduction - directPenalty));
 
-    trackStep('STEP_14_RISK_SCORING', 'Risk scoring calculation', {
+    trackStep('STEP_69', 'Risk scoring calculation', {
       count: riskScore.total,
       findings: {
         critical: riskScore.critical,
@@ -4404,7 +4404,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     });
 
-    trackStep('STEP_15_COMPLETED', 'Audit completed', { count: 1 });
+    trackStep('STEP_70', 'Audit completed', { count: 1 });
 
     // Calculate final response
     const totalDuration = ((Date.now() - auditStart) / 1000).toFixed(2);
