@@ -2,17 +2,22 @@
 
 ## Vue d'ensemble
 
-Le collecteur AD détecte actuellement **23 types de vulnérabilités** répartis en 4 niveaux de sévérité.
+Le collecteur AD détecte actuellement **48 types de vulnérabilités** répartis en 4 niveaux de sévérité.
 
 **Statistiques:**
-- 🔴 **Critique**: 7 vulnérabilités
-- 🟠 **High**: 9 vulnérabilités
-- 🟡 **Medium**: 6 vulnérabilités
-- 🔵 **Low**: 1 vulnérabilité
+- 🔴 **Critique**: 8 vulnérabilités
+- 🟠 **High**: 15 vulnérabilités
+- 🟡 **Medium**: 21 vulnérabilités
+- 🔵 **Low**: 4 vulnérabilités
+
+**Évolution:**
+- v1.7.5: 23 vulnérabilités (baseline)
+- v1.8.0-phase1: 33 vulnérabilités (+10)
+- v1.9.0-phase2: **48 vulnérabilités (+25)** = **+108% d'amélioration**
 
 ---
 
-## 🔴 CRITICAL - Vulnérabilités Critiques (7)
+## 🔴 CRITICAL - Vulnérabilités Critiques (8)
 
 ### 1. PASSWORD_NOT_REQUIRED
 **Description:** Compte utilisateur ne nécessitant pas de mot de passe (UAC flag 0x20)
@@ -136,9 +141,27 @@ Set-ADUser -Identity admin_username -AccountNotDelegated $true
 
 ---
 
-## 🟠 HIGH - Vulnérabilités Importantes (9)
+### 9. GOLDEN_TICKET_RISK **[NEW Phase 2]**
+**Description:** Compte krbtgt avec mot de passe non changé depuis plus de 180 jours
 
-### 9. KERBEROASTING_RISK
+**Impact:** Permet la création de Golden Tickets pour une persistance longue durée dans le domaine
+
+**Détection:** `pwdLastSet` de krbtgt > 180 jours
+
+**Référence:** [MITRE ATT&CK T1558.001](https://attack.mitre.org/techniques/T1558/001/)
+
+**Remédiation:**
+```powershell
+# Rotation du mot de passe krbtgt (opération sensible, à planifier)
+# Utiliser le script Microsoft officiel:
+# https://github.com/microsoft/New-KrbtgtKeys.ps1
+```
+
+---
+
+## 🟠 HIGH - Vulnérabilités Importantes (15)
+
+### 10. KERBEROASTING_RISK
 **Description:** Compte utilisateur avec Service Principal Name (SPN) configuré
 
 **Impact:** Permet l'attaque Kerberoasting - extraction de hash de ticket de service crackable offline
@@ -156,7 +179,7 @@ Get-ADUser -Identity username -Properties servicePrincipalName | Select-Object s
 
 ---
 
-### 10. CONSTRAINED_DELEGATION
+### 11. CONSTRAINED_DELEGATION
 **Description:** Délégation contrainte Kerberos configurée (attribut `msDS-AllowedToDelegateTo`)
 
 **Impact:** Le compte peut impersonner d'autres utilisateurs mais uniquement vers les services spécifiés
@@ -169,7 +192,7 @@ Get-ADUser -Identity username -Properties servicePrincipalName | Select-Object s
 
 ---
 
-### 11. SID_HISTORY
+### 12. SID_HISTORY
 **Description:** Attribut `sIDHistory` présent (utilisé pour migrations de domaine)
 
 **Impact:** Peut être exploité pour élévation de privilèges si contient des SIDs d'anciens comptes privilégiés
@@ -188,7 +211,7 @@ Set-ADUser -Identity username -Clear sIDHistory
 
 ---
 
-### 12. WEAK_ENCRYPTION_RC4
+### 13. WEAK_ENCRYPTION_RC4
 **Description:** Chiffrement RC4 uniquement (sans AES)
 
 **Impact:** RC4 a des faiblesses cryptographiques connues (attaques de type NOMORE, RC4NOMORE)
@@ -202,7 +225,7 @@ Set-ADUser -Identity username -Replace @{'msDS-SupportedEncryptionTypes'=24}
 
 ---
 
-### 13. WEAK_ENCRYPTION_FLAG
+### 14. WEAK_ENCRYPTION_FLAG
 **Description:** Flag "USE_DES_KEY_ONLY" activé dans userAccountControl
 
 **Impact:** Force l'utilisation exclusive de DES (algorithme obsolète et faible)
@@ -216,7 +239,7 @@ Set-ADAccountControl -Identity username -UseDESKeyOnly $false
 
 ---
 
-### 14. GPO_MODIFY_RIGHTS
+### 15. GPO_MODIFY_RIGHTS
 **Description:** Membre du groupe "Group Policy Creator Owners"
 
 **Impact:** Peut créer/modifier des GPOs et potentiellement exécuter du code sur tous les postes du domaine
@@ -229,7 +252,7 @@ Set-ADAccountControl -Identity username -UseDESKeyOnly $false
 
 ---
 
-### 15. DNS_ADMINS_MEMBER
+### 16. DNS_ADMINS_MEMBER
 **Description:** Membre du groupe DnsAdmins
 
 **Impact:** Peut charger des DLLs arbitraires sur les contrôleurs de domaine via le service DNS (escalade vers Domain Admin)
@@ -245,7 +268,7 @@ Remove-ADGroupMember -Identity DnsAdmins -Members username -Confirm:$false
 
 ---
 
-### 16. REPLICATION_RIGHTS
+### 17. REPLICATION_RIGHTS
 **Description:** Compte avec adminCount=1 mais hors des groupes d'admin standards
 
 **Impact:** Peut avoir des droits de réplication (DCSync) pour extraire tous les hashs du domaine
@@ -262,7 +285,7 @@ Remove-ADGroupMember -Identity DnsAdmins -Members username -Confirm:$false
 
 ---
 
-### 17. OVERSIZED_GROUP_CRITICAL
+### 18. OVERSIZED_GROUP_CRITICAL
 **Description:** Groupe avec plus de 1000 membres
 
 **Impact:**
@@ -276,9 +299,90 @@ Remove-ADGroupMember -Identity DnsAdmins -Members username -Confirm:$false
 
 ---
 
-## 🟡 MEDIUM - Vulnérabilités Moyennes (6)
+### 19. BACKUP_OPERATORS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Backup Operators
 
-### 18. PASSWORD_VERY_OLD
+**Impact:** Peut lire/écrire n'importe quel fichier sur les DCs (bypass des ACLs, vol de NTDS.dit)
+
+**Détection:** Appartenance au groupe `Backup Operators`
+
+**Référence:** [Backup Operators Abuse](https://www.hackingarticles.in/windows-privilege-escalation-backup-operators-group/)
+
+**Remédiation:**
+```powershell
+Remove-ADGroupMember -Identity "Backup Operators" -Members username
+```
+
+---
+
+### 20. ACCOUNT_OPERATORS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Account Operators
+
+**Impact:** Peut créer/modifier des comptes et groupes (sauf Domain Admins), potentiel d'escalade
+
+**Détection:** Appartenance au groupe `Account Operators`
+
+**Remédiation:** Limiter strictement les membres
+
+---
+
+### 21. SERVER_OPERATORS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Server Operators
+
+**Impact:** Peut modifier les services sur les DCs, potentiel d'exécution de code privilégié
+
+**Détection:** Appartenance au groupe `Server Operators`
+
+**Remédiation:** Limiter strictement les membres
+
+---
+
+### 22. PRINT_OPERATORS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Print Operators
+
+**Impact:** Peut charger des drivers d'imprimante sur les DCs (escalade vers SYSTEM)
+
+**Détection:** Appartenance au groupe `Print Operators`
+
+**Remédiation:** Limiter strictement les membres
+
+---
+
+### 23. COMPUTER_UNCONSTRAINED_DELEGATION **[NEW Phase 2]**
+**Description:** Ordinateur avec délégation Kerberos non contrainte
+
+**Impact:** Peut capturer des TGTs d'utilisateurs s'y connectant (attaque PrinterBug + unconstrained delegation)
+
+**Détection:** `(objectClass=computer) AND (userAccountControl:1.2.840.113556.1.4.803:=524288)`
+
+**Référence:** [MITRE ATT&CK T1187](https://attack.mitre.org/techniques/T1187/)
+
+**Remédiation:**
+```powershell
+Set-ADComputer -Identity computername -TrustedForDelegation $false
+```
+
+---
+
+### 24. MACHINE_ACCOUNT_QUOTA_ABUSE **[NEW Phase 2]**
+**Description:** ms-DS-MachineAccountQuota > 0 (par défaut 10)
+
+**Impact:** N'importe quel utilisateur du domaine peut joindre 10 machines, potentiel d'abus (RBCD, etc.)
+
+**Détection:** `ms-DS-MachineAccountQuota` au niveau du domaine
+
+**Référence:** [MAQ Exploitation](https://www.netspi.com/blog/technical/network-penetration-testing/machineaccountquota-transitive-quota/)
+
+**Remédiation:**
+```powershell
+Set-ADDomain -Identity "DC=domain,DC=com" -Replace @{"ms-DS-MachineAccountQuota"="0"}
+```
+
+---
+
+## 🟡 MEDIUM - Vulnérabilités Moyennes (21)
+
+### 25. PASSWORD_VERY_OLD
 **Description:** Mot de passe non changé depuis plus d'un an (365 jours)
 
 **Impact:** Plus un mot de passe est ancien, plus il a de chances d'avoir été compromis ou divulgué
@@ -292,7 +396,7 @@ Set-ADUser -Identity username -ChangePasswordAtLogon $true
 
 ---
 
-### 19. INACTIVE_365_DAYS
+### 26. INACTIVE_365_DAYS
 **Description:** Compte inactif depuis plus d'un an
 
 **Impact:** Compte potentiellement oublié et non surveillé, cible facile pour les attaquants
@@ -308,7 +412,7 @@ Remove-ADUser -Identity username -Confirm:$true
 
 ---
 
-### 20. SHARED_ACCOUNT
+### 27. SHARED_ACCOUNT
 **Description:** Compte partagé détecté (commence par shared, common, generic, team)
 
 **Impact:**
@@ -322,7 +426,7 @@ Remove-ADUser -Identity username -Confirm:$true
 
 ---
 
-### 21. WEAK_ENCRYPTION_RC4_WITH_AES
+### 28. WEAK_ENCRYPTION_RC4_WITH_AES
 **Description:** RC4 activé en plus d'AES (downgrade attack possible)
 
 **Impact:** Un attaquant peut forcer l'utilisation de RC4 via une attaque de downgrade
@@ -337,7 +441,7 @@ Set-ADUser -Identity username -Replace @{'msDS-SupportedEncryptionTypes'=24}
 
 ---
 
-### 22. NOT_IN_PROTECTED_USERS
+### 29. NOT_IN_PROTECTED_USERS
 **Description:** Compte privilégié (DA/EA/SA) non membre du groupe "Protected Users"
 
 **Impact:**
@@ -358,7 +462,7 @@ Add-ADGroupMember -Identity "Protected Users" -Members admin_username
 
 ---
 
-### 23. DELEGATION_PRIVILEGE
+### 30. DELEGATION_PRIVILEGE
 **Description:** Membre des groupes Account Operators ou Server Operators
 
 **Impact:** Peut modifier des objets AD et potentiellement élever ses privilèges
@@ -369,7 +473,7 @@ Add-ADGroupMember -Identity "Protected Users" -Members admin_username
 
 ---
 
-### 24. OVERSIZED_GROUP_HIGH
+### 31. OVERSIZED_GROUP_HIGH
 **Description:** Groupe avec 500-1000 membres
 
 **Impact:** Difficulté de gestion et risque de privilèges excessifs
@@ -380,9 +484,194 @@ Add-ADGroupMember -Identity "Protected Users" -Members admin_username
 
 ---
 
-## 🔵 LOW - Vulnérabilités Mineures (1)
+### 32. PASSWORD_NEVER_EXPIRES **[NEW Phase 1]**
+**Description:** Mot de passe configuré pour ne jamais expirer (UAC flag 0x10000)
 
-### 25. TEST_ACCOUNT
+**Impact:** Le mot de passe ne sera jamais renouvelé, augmentant le risque de compromission
+
+**Détection:** `userAccountControl & 0x10000`
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity username -PasswordNeverExpires $false
+```
+
+---
+
+### 33. SCHEMA_ADMINS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Schema Admins
+
+**Impact:** Peut modifier le schéma AD (opération irréversible, risque de corruption)
+
+**Détection:** Appartenance au groupe `Schema Admins`
+
+**Remédiation:** Ce groupe doit être vide par défaut (membership temporaire uniquement)
+
+---
+
+### 34. ENTERPRISE_ADMINS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Enterprise Admins
+
+**Impact:** Contrôle total sur la forêt AD entière (tous les domaines)
+
+**Détection:** Appartenance au groupe `Enterprise Admins`
+
+**Remédiation:** Limiter au strict minimum (0-2 comptes maximum)
+
+---
+
+### 35. DOMAIN_ADMINS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Domain Admins
+
+**Impact:** Contrôle total sur le domaine AD
+
+**Détection:** Appartenance au groupe `Domain Admins`
+
+**Remédiation:** Limiter au strict minimum et utiliser des comptes séparés (admin/user)
+
+---
+
+### 36. ADMINISTRATORS_MEMBER **[NEW Phase 1]**
+**Description:** Membre du groupe Administrators (builtin)
+
+**Impact:** Droits administrateurs sur les DCs et stations de travail du domaine
+
+**Détection:** Appartenance au groupe `Administrators`
+
+**Remédiation:** Limiter strictement les membres
+
+---
+
+### 37. WEAK_PASSWORD_POLICY **[NEW Phase 2]**
+**Description:** Politique de mot de passe faible au niveau du domaine
+
+**Impact:** Facilite les attaques par bruteforce et password spraying
+
+**Détection:**
+- `minPwdLength < 14` (recommandé: 14+)
+- `pwdHistoryLength < 24` (recommandé: 24+)
+- `minPwdAge < 1 jour` (recommandé: 1+)
+
+**Remédiation:**
+```powershell
+Set-ADDefaultDomainPasswordPolicy -Identity domain.com -MinPasswordLength 14 -PasswordHistoryCount 24 -MinPasswordAge 1.00:00:00
+```
+
+---
+
+### 38. DOMAIN_ADMIN_IN_DESCRIPTION **[NEW Phase 2]**
+**Description:** Mots-clés sensibles dans les champs description/info (admin, administrator, domain admin)
+
+**Impact:** Fuite d'informations sur les comptes privilégiés
+
+**Détection:** Regex `/(domain\s*admin|administrateur|admin\s*domain)/i`
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity username -Description "Sanitized description" -Clear info
+```
+
+---
+
+### 39. LAPS_PASSWORD_LEAKED **[NEW Phase 2]**
+**Description:** Mot de passe LAPS exposé dans le champ description/info
+
+**Impact:** Exposition des mots de passe administrateur local
+
+**Détection:** Regex `/(laps|local\s*admin\s*password)/i`
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity username -Clear description,info
+```
+
+---
+
+### 40. DANGEROUS_LOGON_SCRIPTS **[NEW Phase 2]**
+**Description:** Script de logon configuré (attribut scriptPath)
+
+**Impact:** Potentiel d'exécution de code malveillant au logon de l'utilisateur
+
+**Détection:** Présence de l'attribut `scriptPath`
+
+**Remédiation:** Auditer le contenu du script ou utiliser des GPOs préférentiellement
+
+---
+
+### 41. PRE_WINDOWS_2000_ACCESS **[NEW Phase 2]**
+**Description:** Groupe "Pre-Windows 2000 Compatible Access" contient Everyone ou Authenticated Users
+
+**Impact:** Accès en lecture complet à l'annuaire AD pour tous les utilisateurs
+
+**Détection:** Appartenance de `Everyone` (S-1-1-0) ou `Authenticated Users` (S-1-5-11)
+
+**Référence:** [Pre-Win2K Access Abuse](https://support.microsoft.com/en-us/topic/using-the-pre-windows-2000-compatible-access-group-b5f32f74-6c53-4a20-9de4-e0f25a548a8e)
+
+**Remédiation:**
+```powershell
+Remove-ADGroupMember -Identity "Pre-Windows 2000 Compatible Access" -Members "Authenticated Users","Everyone"
+```
+
+---
+
+### 42. EXPIRED_ACCOUNT_IN_ADMIN_GROUP **[NEW Phase 2]**
+**Description:** Compte expiré membre d'un groupe administrateur
+
+**Impact:** Compte inutilisable mais toujours présent dans les groupes sensibles
+
+**Détection:** `accountExpires < now AND memberOf contains admin groups`
+
+**Remédiation:**
+```powershell
+Remove-ADGroupMember -Identity "Domain Admins" -Members expired_username
+```
+
+---
+
+### 43. DISABLED_ACCOUNT_IN_ADMIN_GROUP **[NEW Phase 2]**
+**Description:** Compte désactivé membre d'un groupe administrateur
+
+**Impact:** Compte inutilisable mais toujours présent dans les groupes sensibles, peut être réactivé
+
+**Détection:** `userAccountControl & 0x2 AND memberOf contains admin groups`
+
+**Remédiation:**
+```powershell
+Remove-ADGroupMember -Identity "Domain Admins" -Members disabled_username
+```
+
+---
+
+### 44. PRIMARYGROUPID_SPOOFING **[NEW Phase 2]**
+**Description:** primaryGroupID=512 (Domain Admins) sans memberOf correspondant
+
+**Impact:** Technique de persistence - membership caché aux outils classiques
+
+**Détection:** `primaryGroupID=512 AND NOT memberOf contains "CN=Domain Admins"`
+
+**Référence:** [PrimaryGroupID Abuse](https://adsecurity.org/?p=1772)
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity username -Replace @{primaryGroupID=513}  # 513 = Domain Users
+```
+
+---
+
+### 45. FOREIGN_SECURITY_PRINCIPALS **[NEW Phase 2]**
+**Description:** Foreign Security Principal membre d'un groupe sensible
+
+**Impact:** Compte externe (autre forêt) avec des privilèges élevés - risque de compromission inter-forêts
+
+**Détection:** `objectClass=foreignSecurityPrincipal AND memberOf contains sensitive groups`
+
+**Remédiation:** Auditer les trusts inter-forêts et limiter les FSPs aux besoins stricts
+
+---
+
+## 🔵 LOW - Vulnérabilités Mineures (4)
+
+### 46. TEST_ACCOUNT
 **Description:** Compte de test détecté (commence par test, demo, temp, sample, example)
 
 **Impact:** Généralement mal sécurisé, peut servir de point d'entrée
@@ -398,15 +687,96 @@ Remove-ADUser -Identity testaccount -Confirm:$true
 
 ---
 
+### 47. USER_CANNOT_CHANGE_PASSWORD **[NEW Phase 1]**
+**Description:** L'utilisateur ne peut pas changer son propre mot de passe (UAC flag 0x40)
+
+**Impact:** Si le mot de passe est compromis, l'utilisateur ne peut pas le changer lui-même
+
+**Détection:** `userAccountControl & 0x40`
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity username -CannotChangePassword $false
+```
+
+---
+
+### 48. SMARTCARD_NOT_REQUIRED **[NEW Phase 1]**
+**Description:** Compte privilégié sans obligation de smartcard (UAC flag 0x40000 non défini)
+
+**Impact:** Authentification par mot de passe possible au lieu de smartcard (MFA bypass)
+
+**Détection:** `adminCount=1 AND NOT (userAccountControl & 0x40000)`
+
+**Remédiation:**
+```powershell
+Set-ADUser -Identity admin_username -SmartcardLogonRequired $true
+```
+
+---
+
+### 49. WEAK_KERBEROS_POLICY **[NEW Phase 2]**
+**Description:** Politique Kerberos faible (TGT lifetime > 10 heures)
+
+**Impact:** Augmente la fenêtre d'exploitation des tickets Kerberos volés
+
+**Détection:** `maxTicketAge > 10 heures` (défaut AD: 10h)
+
+**Remédiation:**
+```powershell
+# Configuration via GPO: Computer Configuration > Policies > Windows Settings > Security Settings > Account Policies > Kerberos Policy
+# Recommandé: Maximum lifetime for user ticket = 10 hours
+```
+
+---
+
+### 50. DUPLICATE_SPN **[NEW Phase 2]**
+**Description:** Même SPN configuré sur plusieurs comptes
+
+**Impact:** Problèmes d'authentification Kerberos, potentiel de confusion d'identité
+
+**Détection:** Multiple accounts with identical `servicePrincipalName` value
+
+**Remédiation:**
+```powershell
+# Identifier:
+Get-ADUser -Filter {servicePrincipalName -like "*"} -Properties servicePrincipalName | Group-Object -Property servicePrincipalName | Where-Object {$_.Count -gt 1}
+# Supprimer le doublon:
+Set-ADUser -Identity username -ServicePrincipalName @{Remove='HTTP/duplicate.spn'}
+```
+
+---
+
+### 51. NTLM_RELAY_OPPORTUNITY **[NEW Phase 2]**
+**Description:** Authentification NTLM activée sur le domaine (informationnel)
+
+**Impact:** Vulnérable aux attaques NTLM relay si SMB signing non forcé
+
+**Détection:** Détection automatique (NTLM enabled by default)
+
+**Référence:** [MITRE ATT&CK T1557.001](https://attack.mitre.org/techniques/T1557/001/)
+
+**Remédiation:**
+```powershell
+# Forcer SMB signing via GPO:
+# Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > Security Options
+# "Microsoft network server: Digitally sign communications (always)" = Enabled
+
+# Désactiver NTLM (après tests approfondis):
+# Network security: Restrict NTLM: NTLM authentication in this domain = Deny all
+```
+
+---
+
 ## 📊 Matrice de Risque
 
-| Sévérité | Nombre | Exemples |
-|----------|--------|----------|
-| 🔴 Critical | 7 | AS-REP Roasting, Unconstrained Delegation, DES Encryption |
-| 🟠 High | 9 | Kerberoasting, DNS Admins, DCSync Rights |
-| 🟡 Medium | 6 | Comptes inactifs, RC4+AES, Shared Accounts |
-| 🔵 Low | 1 | Comptes de test |
-| **TOTAL** | **23** | |
+| Sévérité | Nombre | Évolution | Exemples |
+|----------|--------|-----------|----------|
+| 🔴 Critical | 8 | +1 | AS-REP Roasting, Unconstrained Delegation, DES Encryption, Golden Ticket |
+| 🟠 High | 15 | +6 | Kerberoasting, DNS Admins, DCSync Rights, Backup Operators |
+| 🟡 Medium | 21 | +15 | Password Policy, LAPS Leak, FSP, PrimaryGroupID Spoofing |
+| 🔵 Low | 4 | +3 | Test accounts, Weak Kerberos, Duplicate SPN, NTLM Relay |
+| **TOTAL** | **48** | **+25** | **+108% vs v1.7.5** |
 
 ---
 
@@ -449,6 +819,7 @@ Ces vulnérabilités sont mappées aux standards suivants:
 - T1558 - Steal or Forge Kerberos Tickets
 - T1003.006 - OS Credential Dumping: DCSync
 - T1484.001 - Domain Policy Modification: Group Policy
+- T1557.001 - NTLM Relay
 
 ### CIS Controls v8
 - Control 5 - Account Management
@@ -459,9 +830,11 @@ Ces vulnérabilités sont mappées aux standards suivants:
 
 ## 📝 Notes de Version
 
-**Version actuelle du collecteur:** v1.7.5
+**Version actuelle du collecteur:** v1.9.0-phase2
 
 **Changelog:**
+- v1.9.0-phase2: +25 vulnérabilités (Phase 2: domain config + Phase 3/4: 2 simple checks) = **48 total**
+- v1.8.0-phase1: +10 vulnérabilités (group membership + UAC flags) = 33 total
 - v1.7.5: Fix SSE complete event flush delay
 - v1.7.4: Ajout détection OVERSIZED_GROUP
 - v1.7.3: Amélioration détection weak encryption (DES + RC4)
@@ -472,19 +845,27 @@ Ces vulnérabilités sont mappées aux standards suivants:
 
 ## 🚀 Roadmap (Fonctionnalités Premium Backend)
 
-Les vulnérabilités suivantes seront détectées par le **backend d'analyse premium** (via API fermée):
+Les vulnérabilités suivantes nécessitent une analyse ACL complexe et seront détectées par le **backend d'analyse premium** (via API fermée):
 
-### À venir:
-1. **NTLM Relay Risk** - Comptes vulnérables aux attaques NTLM relay
-2. **Golden Ticket Indicators** - Indicateurs de persistence via Golden Ticket
-3. **Shadow Credentials** - Exploitation de msDS-KeyCredentialLink
-4. **RBCD Abuse** - Resource-Based Constrained Delegation abuse
-5. **ACL Misconfiguration** - ACLs dangereuses (GenericAll, WriteDacl, etc.)
-6. **LAPS Not Configured** - Ordinateurs sans LAPS activé
-7. **SMB Signing Disabled** - Ordinateurs sans signature SMB
-8. **Zerologon Vulnerable** - DCs vulnérables à CVE-2020-1472
-9. **PrintNightmare Risk** - Print Spooler activé sur DCs
-10. **PetitPotam Vulnerable** - EFS RPC accessible
+### ACL-Based Detections (nécessite parser LDAP ACL):
+1. **SHADOW_CREDENTIALS** - Exploitation de msDS-KeyCredentialLink (CRITICAL)
+2. **RBCD_ABUSE** - Resource-Based Constrained Delegation abuse (CRITICAL)
+3. **ACL_GENERICALL** - GenericAll sur objets sensibles (HIGH)
+4. **ACL_WRITEDACL** - WriteDACL sur objets sensibles (HIGH)
+5. **ACL_WRITEOWNER** - WriteOwner sur objets sensibles (HIGH)
+6. **ACL_FORCECHANGEPASSWORD** - ForceChangePassword abuse (MEDIUM)
+7. **ACL_GENERICWRITE** - GenericWrite sur objets sensibles (MEDIUM)
+8. **WRITESPN_ABUSE** - WriteSPN for targeted Kerberoasting (MEDIUM)
+9. **GPO_LINK_POISONING** - Weak ACLs on GPO links (MEDIUM)
+
+### Group Nesting Analysis:
+10. **DANGEROUS_GROUP_NESTING** - Nested groups leading to unintended privilege escalation (MEDIUM)
+
+### AdminSDHolder:
+11. **ADMINSDHOLDER_BACKDOOR** - Modified AdminSDHolder ACL for persistence (MEDIUM)
+
+### Miscellaneous:
+12. **EVERYONE_IN_ACL** - Everyone/Authenticated Users with dangerous permissions (MEDIUM)
 
 ### Analyse Multi-Pass (Premium)
 - **Pass 1**: Scoring par sévérité brute
@@ -502,9 +883,12 @@ Les vulnérabilités suivantes seront détectées par le **backend d'analyse pre
 4. [NIST Special Publications](https://csrc.nist.gov/publications/sp)
 5. [CIS Controls](https://www.cisecurity.org/controls)
 6. [ANSSI Guides](https://www.ssi.gouv.fr/)
+7. [Backup Operators Abuse](https://www.hackingarticles.in/windows-privilege-escalation-backup-operators-group/)
+8. [Machine Account Quota Exploitation](https://www.netspi.com/blog/technical/network-penetration-testing/machineaccountquota-transitive-quota/)
 
 ---
 
 **Auteur:** AD Collector for n8n
 **Licence:** MIT
 **Repository:** https://github.com/fuskerrs/docker-ad-collector-n8n
+**Version:** v1.9.0-phase2 (48 vulnerability types)
