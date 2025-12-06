@@ -1,40 +1,40 @@
 # AD Collector API Guide
 
-## Version: 2.1.0
+## Version: 2.1.1
 
-Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
+This guide describes all available API endpoints in the Docker AD Collector for n8n.
 
-**Phase 4 Complete:** 70 vulnerability types (ADCS/PKI ESC1-8 + LAPS) = +204% vs baseline
+**Version 2.1.1:** Granular SSE logging with 70 audit steps for improved visibility and per-vulnerability feedback.
 
 ---
 
 ## Configuration
 
-### Variables d'environnement
+### Environment Variables
 
-| Variable | Description | Défaut |
-|----------|-------------|--------|
-| `LDAP_URL` | URL du serveur AD | `ldaps://localhost:636` |
-| `LDAP_BASE_DN` | Base DN pour les recherches | `DC=example,DC=com` |
-| `LDAP_BIND_DN` | DN du compte de service | `CN=admin,CN=Users,DC=example,DC=com` |
-| `LDAP_BIND_PASSWORD` | Mot de passe du compte | `password` |
-| `LDAP_TLS_VERIFY` | Vérifier le certificat TLS | `false` |
-| `PORT` | Port d'écoute | `8443` |
-| `API_TOKEN` | Token JWT personnalisé | Auto-généré |
-| `TOKEN_EXPIRY` | Durée de validité du token | `365d` |
-| `MAX_PWD_AGE_DAYS` | Durée max du mot de passe | `90` |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LDAP_URL` | AD server URL | `ldaps://localhost:636` |
+| `LDAP_BASE_DN` | Base DN for searches | `DC=example,DC=com` |
+| `LDAP_BIND_DN` | Service account DN | `CN=admin,CN=Users,DC=example,DC=com` |
+| `LDAP_BIND_PASSWORD` | Account password | `password` |
+| `LDAP_TLS_VERIFY` | Verify TLS certificate | `false` |
+| `PORT` | Listening port | `8443` |
+| `API_TOKEN` | Custom JWT token | Auto-generated |
+| `TOKEN_EXPIRY` | Token validity duration | `365d` |
+| `MAX_PWD_AGE_DAYS` | Max password age | `90` |
 
 ---
 
-## Authentification
+## Authentication
 
-Toutes les requêtes API (sauf `/health`) nécessitent un header Authorization :
+All API requests (except `/health`) require an Authorization header:
 
 ```
 Authorization: Bearer <API_TOKEN>
 ```
 
-Le token est affiché dans les logs au démarrage du conteneur :
+The token is displayed in the logs at container startup:
 ```
 docker logs ad-collector
 ```
@@ -47,16 +47,16 @@ docker logs ad-collector
 
 #### GET /health
 
-Vérifie que le service est en ligne.
+Checks if the service is online.
 
-**Authentification requise :** Non
+**Authentication required:** No
 
-**Exemple :**
+**Example:**
 ```bash
 curl http://localhost:8443/health
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "status": "ok",
@@ -67,22 +67,22 @@ curl http://localhost:8443/health
 
 ---
 
-### Test de connexion LDAP
+### LDAP Connection Test
 
 #### POST /api/test-connection
 
-Teste la connexion au serveur Active Directory.
+Tests the connection to the Active Directory server.
 
-**Body :** Aucun
+**Body:** None
 
-**Exemple :**
+**Example:**
 ```bash
 curl -X POST http://localhost:8443/api/test-connection \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json"
 ```
 
-**Réponse succès :**
+**Success response:**
 ```json
 {
   "success": true,
@@ -94,7 +94,7 @@ curl -X POST http://localhost:8443/api/test-connection \
 
 ---
 
-## Opérations sur les Utilisateurs
+## User Operations
 
 ### GET /api/users/get
 
@@ -113,7 +113,7 @@ Récupère un utilisateur par son samAccountName.
 | `samAccountName` | string | Oui | Identifiant de l'utilisateur |
 | `includeAll` | boolean | Non | Inclure tous les attributs |
 
-**Exemple :**
+**Example:**
 ```bash
 curl -X POST http://localhost:8443/api/users/get \
   -H "Authorization: Bearer <TOKEN>" \
@@ -121,7 +121,7 @@ curl -X POST http://localhost:8443/api/users/get \
   -d '{"samAccountName": "john.doe"}'
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -194,7 +194,7 @@ curl -X POST http://localhost:8443/api/users/list \
   }'
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -236,7 +236,7 @@ Crée un nouvel utilisateur.
 | `description` | string | Non | Description |
 | `userPrincipalName` | string | Non | UPN (défaut: sam@domain) |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -264,7 +264,7 @@ OU
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -286,7 +286,7 @@ Désactive un compte utilisateur.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -317,7 +317,7 @@ Réinitialise le mot de passe d'un utilisateur.
 | `newPassword` | string | Oui | Nouveau mot de passe |
 | `forceChange` | boolean | Non | Forcer le changement à la prochaine connexion |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -345,7 +345,7 @@ OU
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -367,7 +367,7 @@ Déverrouille un compte utilisateur verrouillé.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -389,7 +389,7 @@ Vérifie l'expiration du mot de passe d'un utilisateur.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -431,7 +431,7 @@ Modifie les attributs d'un utilisateur.
 | `dn` | string | Oui* | DN de l'utilisateur (*ou samAccountName) |
 | `attributes` | object | Oui | Attributs à modifier (clé: valeur) |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -453,7 +453,7 @@ Récupère les groupes dont l'utilisateur est membre.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -479,7 +479,7 @@ Récupère l'activité d'un utilisateur (dernière connexion, etc.).
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -552,25 +552,73 @@ curl -X POST http://localhost:8443/api/audit \
 
 ### Audit Steps and Progress Tracking
 
-The audit executes in 15 logical steps, each with a specific code:
+The audit executes in 70 granular steps, each with a specific code:
 
 | Step Code | Description |
 |-----------|-------------|
-| `STEP_01_INIT` | Audit initialization |
-| `STEP_02_USER_ENUM` | User enumeration |
-| `STEP_03_PASSWORD_SEC` | Password security analysis |
-| `STEP_04_KERBEROS_SEC` | Kerberos security analysis |
-| `STEP_05_ACCOUNT_STATUS` | Account status analysis |
-| `STEP_06_PRIVILEGED_ACCTS` | Privileged accounts analysis |
-| `STEP_07_SERVICE_ACCTS` | Service accounts detection |
-| `STEP_08_DANGEROUS_PATTERNS` | Dangerous patterns detection |
-| `STEP_09_TEMPORAL_ANALYSIS` | Temporal analysis |
-| `STEP_10_GROUP_ENUM` | Group enumeration |
-| `STEP_11_GROUP_ANALYSIS` | Group analysis |
-| `STEP_12_COMPUTER_ANALYSIS` | Computer analysis (optional) |
-| `STEP_13_OU_ANALYSIS` | OU analysis |
-| `STEP_14_RISK_SCORING` | Risk scoring calculation |
-| `STEP_15_COMPLETED` | Audit completed |
+| `STEP_01` | Audit initialization |
+| `STEP_02` | User enumeration |
+| `STEP_03` | Password not required check |
+| `STEP_04` | Reversible encryption check |
+| `STEP_05` | Password never expires check |
+| `STEP_06` | AS-REP roasting check |
+| `STEP_07` | Kerberoasting check |
+| `STEP_08` | Unconstrained delegation check |
+| `STEP_09` | Constrained delegation check |
+| `STEP_10` | Account status analysis |
+| `STEP_11` | Privileged groups enumeration |
+| `STEP_12` | AdminCount=1 check |
+| `STEP_13` | Golden Ticket risk assessment |
+| `STEP_14` | Service accounts detection (SPN) |
+| `STEP_15` | Service accounts detection (name pattern) |
+| `STEP_16` | Duplicate SPN check |
+| `STEP_17` | Password in description check |
+| `STEP_18` | Test accounts check |
+| `STEP_19` | Shared accounts check |
+| `STEP_20` | Unix user password check |
+| `STEP_21` | SID History check |
+| `STEP_22` | Weak Kerberos encryption check |
+| `STEP_23` | Sensitive delegation check |
+| `STEP_24` | LAPS readable check |
+| `STEP_25` | DCSync capable check |
+| `STEP_26` | Protected Users bypass check |
+| `STEP_27` | GPO modify rights check |
+| `STEP_28` | DNS Admins check |
+| `STEP_29` | Replication rights check |
+| `STEP_30` | Delegation privilege check |
+| `STEP_38` | Temporal analysis |
+| `STEP_39` | Group enumeration |
+| `STEP_40` | Group analysis |
+| `STEP_41` | Computer analysis (optional) |
+| `STEP_42` | OU analysis |
+| `STEP_43` | Domain configuration security checks |
+| `STEP_44` | Computer unconstrained delegation check |
+| `STEP_45` | Foreign security principals check (Phase 2) |
+| `STEP_46` | NTLM relay opportunity check (Phase 2) |
+| `STEP_47` | Shadow Credentials check (Phase 3) |
+| `STEP_48` | RBCD abuse check (Phase 3) |
+| `STEP_49` | Dangerous group nesting check (Phase 3) |
+| `STEP_50` | AdminSDHolder backdoor check (Phase 3) |
+| `STEP_51` | ACL GenericAll check (Phase 3) |
+| `STEP_52` | ACL WriteDACL check (Phase 3) |
+| `STEP_53` | ACL WriteOwner check (Phase 3) |
+| `STEP_54` | Everyone in ACL check (Phase 3) |
+| `STEP_55` | ACL GenericWrite check (Phase 3) |
+| `STEP_56` | ACL Force Change Password check (Phase 3) |
+| `STEP_57` | WriteSPN abuse check (Phase 3) |
+| `STEP_58` | GPO link poisoning check (Phase 3) |
+| `STEP_59` | ESC1 vulnerable template check (Phase 4) |
+| `STEP_60` | ESC2 any purpose check (Phase 4) |
+| `STEP_61` | ESC3 enrollment agent check (Phase 4) |
+| `STEP_62` | ESC4 vulnerable template ACL check (Phase 4) |
+| `STEP_63` | ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2 check (Phase 4) |
+| `STEP_64` | ESC8 HTTP enrollment check (Phase 4) |
+| `STEP_65` | LAPS not deployed check (Phase 4) |
+| `STEP_66` | LAPS password readable check (Phase 4) |
+| `STEP_67` | LAPS legacy attribute check (Phase 4) |
+| `STEP_68` | ADCS weak permissions check (Phase 4) |
+| `STEP_69` | Risk scoring calculation |
+| `STEP_70` | Audit completed |
 
 ---
 
@@ -1294,7 +1342,7 @@ OU
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1319,7 +1367,7 @@ Liste les groupes avec pagination automatique.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1342,7 +1390,7 @@ Recherche des groupes par nom.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1386,7 +1434,7 @@ Crée un nouveau groupe.
 | Domain Local Distribution | `4` |
 | Universal Distribution | `8` |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1412,7 +1460,7 @@ Modifie les attributs d'un groupe.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1440,7 +1488,7 @@ OU
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1470,7 +1518,7 @@ Ajoute un utilisateur à un groupe.
 | `groupDn` | string | Oui | DN du groupe |
 | `skipIfMember` | boolean | Non | Ne pas échouer si déjà membre |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1504,7 +1552,7 @@ Retire un utilisateur d'un groupe.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1528,7 +1576,7 @@ Récupère une OU par DN.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1553,7 +1601,7 @@ Liste les OUs.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1576,7 +1624,7 @@ Recherche des OUs par nom.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1606,7 +1654,7 @@ Crée une nouvelle OU.
 | `parentDn` | string | Non | OU parente (défaut: Base DN) |
 | `description` | string | Non | Description |
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1631,7 +1679,7 @@ Modifie les attributs d'une OU.
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
@@ -1653,7 +1701,7 @@ Supprime une OU (doit être vide).
 }
 ```
 
-**Réponse :**
+**Response:**
 ```json
 {
   "success": true,
