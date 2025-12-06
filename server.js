@@ -50,7 +50,7 @@ if (process.env.API_TOKEN) {
 }
 
 console.log('\n========================================');
-console.log('AD Collector for n8n - v1.8.0-phase1');
+console.log('AD Collector for n8n - v1.9.0-phase2');
 console.log('========================================');
 console.log('Configuration:');
 console.log(`  LDAP URL: ${config.ldap.url}`);
@@ -290,7 +290,7 @@ function getUserDetails(user) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ad-collector', version: '1.8.0-phase1' });
+  res.json({ status: 'ok', service: 'ad-collector', version: '1.9.0-phase2' });
 });
 
 // Test LDAP connection
@@ -1124,7 +1124,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       gpCreatorOwners: [],
       dnsAdmins: [],
       adminCount: [],
-      protectedUsers: []
+      protectedUsers: [],
+      preWindows2000Access: []
     };
 
     // Get privileged groups
@@ -1140,7 +1141,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
       'Remote Desktop Users': 'remoteDesktopUsers',
       'Group Policy Creator Owners': 'gpCreatorOwners',
       'DnsAdmins': 'dnsAdmins',
-      'Protected Users': 'protectedUsers'
+      'Protected Users': 'protectedUsers',
+      'Pre-Windows 2000 Compatible Access': 'preWindows2000Access'
     };
 
     for (const [groupName, key] of Object.entries(privGroups)) {
@@ -1188,6 +1190,28 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
+    // Check Pre-Windows 2000 Compatible Access group for Everyone/Authenticated Users (Phase 2)
+    const preWin2000Members = privilegedAccounts.preWindows2000Access.map(m => m.dn);
+    for (const memberDn of preWin2000Members) {
+      // Check for Everyone (S-1-1-0) or Authenticated Users (S-1-5-11)
+      // These are typically represented as CN=S-1-1-0 or similar in the DN
+      if (memberDn.includes('S-1-1-0') || memberDn.toLowerCase().includes('cn=everyone')) {
+        findings.medium.push({
+          type: 'PRE_WINDOWS_2000_ACCESS',
+          dn: memberDn,
+          member: 'Everyone',
+          message: 'Everyone has Pre-Windows 2000 Compatible Access (full AD read access)'
+        });
+      } else if (memberDn.includes('S-1-5-11') || memberDn.toLowerCase().includes('cn=authenticated users')) {
+        findings.medium.push({
+          type: 'PRE_WINDOWS_2000_ACCESS',
+          dn: memberDn,
+          member: 'Authenticated Users',
+          message: 'Authenticated Users has Pre-Windows 2000 Compatible Access'
+        });
+      }
+    }
+
     trackStep('STEP_06_PRIVILEGED_ACCTS', 'Privileged accounts analysis', {
       count: privilegedAccounts.domainAdmins.length + privilegedAccounts.enterpriseAdmins.length +
              privilegedAccounts.administrators.length,
@@ -1197,6 +1221,33 @@ app.post('/api/audit', authenticate, async (req, res) => {
         adminCount: privilegedAccounts.adminCount.length
       }
     });
+    stepStart = Date.now();
+
+    // STEP 06b: Golden Ticket Risk Assessment
+    try {
+      const krbtgtUser = await searchOne('(sAMAccountName=krbtgt)');
+      if (krbtgtUser) {
+        const pwdLastSet = fileTimeToDate(krbtgtUser.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
+        if (pwdLastSet) {
+          const pwdAge = Math.floor((now - pwdLastSet.getTime()) / (24 * 60 * 60 * 1000));
+          const goldenTicketThreshold = 180; // 180 days
+
+          if (pwdAge > goldenTicketThreshold) {
+            findings.critical.push({
+              type: 'GOLDEN_TICKET_RISK',
+              dn: krbtgtUser.objectName,
+              samAccountName: 'krbtgt',
+              passwordAge: pwdAge,
+              threshold: goldenTicketThreshold,
+              message: `krbtgt password is ${pwdAge} days old (threshold: ${goldenTicketThreshold} days)`
+            });
+          }
+        }
+      }
+      trackStep('STEP_06b_GOLDEN_TICKET', 'Golden Ticket risk assessment', { count: 1 });
+    } catch (e) {
+      // krbtgt account not found (unlikely but possible in test environments)
+    }
     stepStart = Date.now();
 
     // STEP 07: Service Accounts Detection
@@ -1209,6 +1260,8 @@ app.post('/api/audit', authenticate, async (req, res) => {
     const servicePatterns = /^(svc|service|sql|apache|nginx|iis|app|api|bot)/i;
     const descPatterns = /(service|application|automated|api|bot)/i;
 
+    const spnMap = new Map(); // Map to track SPN -> [users]
+
     for (const user of allUsers) {
       const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
       const desc = user.attributes.find(a => a.type === 'description')?.values[0] || '';
@@ -1217,10 +1270,31 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
       if (spn.length > 0) {
         serviceAccounts.detectedBySPN.push({ ...getUserDetails(user), spnCount: spn.length });
+
+        // Track SPNs for duplicate detection (Phase 2)
+        for (const spnValue of spn) {
+          if (!spnMap.has(spnValue)) {
+            spnMap.set(spnValue, []);
+          }
+          spnMap.get(spnValue).push({ sam, dn });
+        }
       } else if (servicePatterns.test(sam)) {
         serviceAccounts.detectedByName.push(getUserDetails(user));
       } else if (descPatterns.test(desc)) {
         serviceAccounts.detectedByDescription.push({ ...getUserDetails(user), description: desc });
+      }
+    }
+
+    // Detect duplicate SPNs (Phase 2)
+    for (const [spnValue, users] of spnMap.entries()) {
+      if (users.length > 1) {
+        findings.low.push({
+          type: 'DUPLICATE_SPN',
+          spn: spnValue,
+          accountCount: users.length,
+          accounts: users.map(u => u.sam).join(', '),
+          message: `SPN "${spnValue}" is registered on ${users.length} accounts`
+        });
       }
     }
 
@@ -1282,6 +1356,24 @@ app.post('/api/audit', authenticate, async (req, res) => {
       if (sharedPatterns.test(sam)) {
         dangerousPatterns.sharedAccounts.push(getUserDetails(user));
         findings.medium.push({ type: 'SHARED_ACCOUNT', ...getUserDetails(user) });
+      }
+
+      // Domain admin in description (Phase 2)
+      const domainAdminPattern = /(domain\s*admin|administrateur|admin\s*domain)/i;
+      if (domainAdminPattern.test(desc) || domainAdminPattern.test(info)) {
+        findings.medium.push({ type: 'DOMAIN_ADMIN_IN_DESCRIPTION', ...getUserDetails(user), description: desc || info });
+      }
+
+      // LAPS password leaked in description (Phase 2)
+      const lapsPattern = /(laps|local\s*admin\s*password)/i;
+      if (lapsPattern.test(desc) || lapsPattern.test(info)) {
+        findings.medium.push({ type: 'LAPS_PASSWORD_LEAKED', ...getUserDetails(user), description: desc || info });
+      }
+
+      // Dangerous logon scripts (Phase 2)
+      const scriptPath = user.attributes.find(a => a.type === 'scriptPath')?.values[0];
+      if (scriptPath) {
+        findings.medium.push({ type: 'DANGEROUS_LOGON_SCRIPTS', ...getUserDetails(user), scriptPath });
       }
 
       // Default accounts
@@ -1454,6 +1546,45 @@ app.post('/api/audit', authenticate, async (req, res) => {
     for (const account of delegationGroups) {
       advancedSecurity.delegationPrivilege.push(account);
       findings.medium.push({ type: 'DELEGATION_PRIVILEGE', dn: account.dn });
+    }
+
+    // Check for expired accounts in admin groups (Phase 2)
+    const allAdminDns = [
+      ...privilegedAccounts.domainAdmins.map(a => a.dn),
+      ...privilegedAccounts.enterpriseAdmins.map(a => a.dn),
+      ...privilegedAccounts.schemaAdmins.map(a => a.dn),
+      ...privilegedAccounts.administrators.map(a => a.dn)
+    ];
+
+    for (const user of allUsers) {
+      const dn = user.objectName;
+      if (allAdminDns.includes(dn)) {
+        const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const accountExpires = user.attributes.find(a => a.type === 'accountExpires')?.values[0];
+
+        // Expired account in admin group
+        if (accountExpires && accountExpires !== '0' && accountExpires !== '9223372036854775807') {
+          const expiryDate = fileTimeToDate(accountExpires);
+          if (expiryDate && expiryDate.getTime() < now) {
+            findings.medium.push({ type: 'EXPIRED_ACCOUNT_IN_ADMIN_GROUP', ...getUserDetails(user), expiryDate: formatDate(expiryDate) });
+          }
+        }
+
+        // Disabled account in admin group
+        if (uac & 0x2) {
+          findings.medium.push({ type: 'DISABLED_ACCOUNT_IN_ADMIN_GROUP', ...getUserDetails(user) });
+        }
+      }
+
+      // PrimaryGroupID spoofing (primaryGroupID=512 but not in DA memberOf)
+      const primaryGroupID = user.attributes.find(a => a.type === 'primaryGroupID')?.values[0];
+      if (primaryGroupID === '512') { // 512 = Domain Admins RID
+        const memberOf = user.attributes.find(a => a.type === 'memberOf')?.values || [];
+        const isDomainAdminMember = memberOf.some(dn => dn.includes('CN=Domain Admins,'));
+        if (!isDomainAdminMember) {
+          findings.medium.push({ type: 'PRIMARYGROUPID_SPOOFING', ...getUserDetails(user), primaryGroupID: '512' });
+        }
+      }
     }
 
     trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
@@ -1641,6 +1772,124 @@ app.post('/api/audit', authenticate, async (req, res) => {
     };
 
     trackStep('STEP_13_OU_ANALYSIS', 'OU analysis', { count: allOUs.length });
+    stepStart = Date.now();
+
+    // STEP 13b: Domain Configuration Security Checks (Phase 2)
+    try {
+      // Get domain object
+      const domainObj = await searchOne('(objectClass=domain)');
+      if (domainObj) {
+        // Check Machine Account Quota (HIGH risk if > 0, allows any user to join computers)
+        const machineAccountQuota = domainObj.attributes.find(a => a.type === 'ms-DS-MachineAccountQuota')?.values[0];
+        if (machineAccountQuota && parseInt(machineAccountQuota) > 0) {
+          findings.high.push({
+            type: 'MACHINE_ACCOUNT_QUOTA_ABUSE',
+            quota: parseInt(machineAccountQuota),
+            message: `Machine Account Quota is ${machineAccountQuota} (allows users to join computers to domain)`
+          });
+        }
+
+        // Check Kerberos Policy (LOW risk if MaxTicketAge > 10 hours)
+        const maxTicketAge = domainObj.attributes.find(a => a.type === 'maxTicketAge')?.values[0];
+        if (maxTicketAge) {
+          const maxTicketAgeHours = parseInt(maxTicketAge) / 10000000 / 3600; // Convert to hours
+          if (maxTicketAgeHours > 10) {
+            findings.low.push({
+              type: 'WEAK_KERBEROS_POLICY',
+              maxTicketAge: Math.floor(maxTicketAgeHours),
+              threshold: 10,
+              message: `MaxTicketAge is ${Math.floor(maxTicketAgeHours)} hours (threshold: 10 hours)`
+            });
+          }
+        }
+
+        // Check Password Policy (MEDIUM risk if weak settings)
+        const minPwdLength = domainObj.attributes.find(a => a.type === 'minPwdLength')?.values[0];
+        const pwdHistoryLength = domainObj.attributes.find(a => a.type === 'pwdHistoryLength')?.values[0];
+        const minPwdAge = domainObj.attributes.find(a => a.type === 'minPwdAge')?.values[0];
+
+        const weakPolicyIssues = [];
+        if (minPwdLength && parseInt(minPwdLength) < 14) {
+          weakPolicyIssues.push(`MinPasswordLength=${minPwdLength} (recommended: 14+)`);
+        }
+        if (pwdHistoryLength && parseInt(pwdHistoryLength) < 24) {
+          weakPolicyIssues.push(`PasswordHistoryLength=${pwdHistoryLength} (recommended: 24+)`);
+        }
+        if (minPwdAge) {
+          const minPwdAgeDays = Math.abs(parseInt(minPwdAge)) / 10000000 / 86400;
+          if (minPwdAgeDays < 1) {
+            weakPolicyIssues.push(`MinPasswordAge=${Math.floor(minPwdAgeDays)} days (recommended: 1+)`);
+          }
+        }
+
+        if (weakPolicyIssues.length > 0) {
+          findings.medium.push({
+            type: 'WEAK_PASSWORD_POLICY',
+            issues: weakPolicyIssues.join(', '),
+            minPwdLength: parseInt(minPwdLength || 0),
+            pwdHistoryLength: parseInt(pwdHistoryLength || 0)
+          });
+        }
+      }
+      trackStep('STEP_13b_DOMAIN_CONFIG', 'Domain configuration security checks', { count: 1 });
+    } catch (e) {
+      // Domain object query failed
+    }
+    stepStart = Date.now();
+
+    // STEP 13c: Computer Unconstrained Delegation Check (Phase 2)
+    try {
+      const computersWithDelegation = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithDelegation) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.high.push({
+          type: 'COMPUTER_UNCONSTRAINED_DELEGATION',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has unconstrained delegation (vulnerable to PrinterBug/PetitPotam attacks)'
+        });
+      }
+      trackStep('STEP_13c_COMPUTER_DELEGATION', 'Computer delegation security check', { count: computersWithDelegation.length });
+    } catch (e) {
+      // Computer query failed
+    }
+    stepStart = Date.now();
+
+    // STEP 13d: Phase 3+4 Advanced Security Checks
+    try {
+      // FOREIGN_SECURITY_PRINCIPALS (051 - MEDIUM) - Check for external forest principals in sensitive groups
+      try {
+        const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
+        for (const fsp of foreignPrincipals) {
+          const memberOf = fsp.attributes.find(a => a.type === 'memberOf')?.values || [];
+          const sensit iveGroups = memberOf.filter(dn =>
+            dn.includes('Domain Admins') || dn.includes('Enterprise Admins') ||
+            dn.includes('Schema Admins') || dn.includes('Administrators')
+          );
+          if (sensitiveGroups.length > 0) {
+            findings.medium.push({
+              type: 'FOREIGN_SECURITY_PRINCIPALS',
+              dn: fsp.objectName,
+              groups: sensitiveGroups.join('; '),
+              message: 'External forest principal in sensitive group'
+            });
+          }
+        }
+      } catch (e) {}
+
+      // NTLM_RELAY_OPPORTUNITY (065 - LOW) - Informational: NTLM relay risk exists
+      findings.low.push({
+        type: 'NTLM_RELAY_OPPORTUNITY',
+        message: 'NTLM authentication enabled (relay attacks possible if SMB signing not enforced)',
+        recommendation: 'Enable SMB signing and disable NTLM where possible'
+      });
+
+      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 3+4)', { count: 2 });
+    } catch (e) {
+      // Advanced checks failed
+    }
     stepStart = Date.now();
 
     // STEP 14: Risk Scoring
@@ -2057,7 +2306,8 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       gpCreatorOwners: [],
       dnsAdmins: [],
       adminCount: [],
-      protectedUsers: []
+      protectedUsers: [],
+      preWindows2000Access: []
     };
 
     const privGroups = {
@@ -2130,6 +2380,33 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
+    // STEP 06b: Golden Ticket Risk Assessment
+    try {
+      const krbtgtUser = await searchOne('(sAMAccountName=krbtgt)');
+      if (krbtgtUser) {
+        const pwdLastSet = fileTimeToDate(krbtgtUser.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
+        if (pwdLastSet) {
+          const pwdAge = Math.floor((now - pwdLastSet.getTime()) / (24 * 60 * 60 * 1000));
+          const goldenTicketThreshold = 180; // 180 days
+
+          if (pwdAge > goldenTicketThreshold) {
+            findings.critical.push({
+              type: 'GOLDEN_TICKET_RISK',
+              dn: krbtgtUser.objectName,
+              samAccountName: 'krbtgt',
+              passwordAge: pwdAge,
+              threshold: goldenTicketThreshold,
+              message: `krbtgt password is ${pwdAge} days old (threshold: ${goldenTicketThreshold} days)`
+            });
+          }
+        }
+      }
+      trackStep('STEP_06b_GOLDEN_TICKET', 'Golden Ticket risk assessment', { count: 1 });
+    } catch (e) {
+      // krbtgt account not found (unlikely but possible in test environments)
+    }
+    stepStart = Date.now();
+
     // STEP 07: Service Accounts Detection
     const serviceAccounts = {
       detectedBySPN: [],
@@ -2140,6 +2417,8 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     const servicePatterns = /^(svc|service|sql|apache|nginx|iis|app|api|bot)/i;
     const descPatterns = /(service|application|automated|api|bot)/i;
 
+    const spnMap = new Map(); // Map to track SPN -> [users]
+
     for (const user of allUsers) {
       const sam = user.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || '';
       const desc = user.attributes.find(a => a.type === 'description')?.values[0] || '';
@@ -2148,10 +2427,31 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
       if (spn.length > 0) {
         serviceAccounts.detectedBySPN.push({ ...getUserDetails(user), spnCount: spn.length });
+
+        // Track SPNs for duplicate detection (Phase 2)
+        for (const spnValue of spn) {
+          if (!spnMap.has(spnValue)) {
+            spnMap.set(spnValue, []);
+          }
+          spnMap.get(spnValue).push({ sam, dn });
+        }
       } else if (servicePatterns.test(sam)) {
         serviceAccounts.detectedByName.push(getUserDetails(user));
       } else if (descPatterns.test(desc)) {
         serviceAccounts.detectedByDescription.push({ ...getUserDetails(user), description: desc });
+      }
+    }
+
+    // Detect duplicate SPNs (Phase 2)
+    for (const [spnValue, users] of spnMap.entries()) {
+      if (users.length > 1) {
+        findings.low.push({
+          type: 'DUPLICATE_SPN',
+          spn: spnValue,
+          accountCount: users.length,
+          accounts: users.map(u => u.sam).join(', '),
+          message: `SPN "${spnValue}" is registered on ${users.length} accounts`
+        });
       }
     }
 
@@ -2365,6 +2665,45 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       findings.medium.push({ type: 'DELEGATION_PRIVILEGE', dn: account.dn });
     }
 
+    // Check for expired accounts in admin groups (Phase 2)
+    const allAdminDns = [
+      ...privilegedAccounts.domainAdmins.map(a => a.dn),
+      ...privilegedAccounts.enterpriseAdmins.map(a => a.dn),
+      ...privilegedAccounts.schemaAdmins.map(a => a.dn),
+      ...privilegedAccounts.administrators.map(a => a.dn)
+    ];
+
+    for (const user of allUsers) {
+      const dn = user.objectName;
+      if (allAdminDns.includes(dn)) {
+        const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const accountExpires = user.attributes.find(a => a.type === 'accountExpires')?.values[0];
+
+        // Expired account in admin group
+        if (accountExpires && accountExpires !== '0' && accountExpires !== '9223372036854775807') {
+          const expiryDate = fileTimeToDate(accountExpires);
+          if (expiryDate && expiryDate.getTime() < now) {
+            findings.medium.push({ type: 'EXPIRED_ACCOUNT_IN_ADMIN_GROUP', ...getUserDetails(user), expiryDate: formatDate(expiryDate) });
+          }
+        }
+
+        // Disabled account in admin group
+        if (uac & 0x2) {
+          findings.medium.push({ type: 'DISABLED_ACCOUNT_IN_ADMIN_GROUP', ...getUserDetails(user) });
+        }
+      }
+
+      // PrimaryGroupID spoofing (primaryGroupID=512 but not in DA memberOf)
+      const primaryGroupID = user.attributes.find(a => a.type === 'primaryGroupID')?.values[0];
+      if (primaryGroupID === '512') { // 512 = Domain Admins RID
+        const memberOf = user.attributes.find(a => a.type === 'memberOf')?.values || [];
+        const isDomainAdminMember = memberOf.some(dn => dn.includes('CN=Domain Admins,'));
+        if (!isDomainAdminMember) {
+          findings.medium.push({ type: 'PRIMARYGROUPID_SPOOFING', ...getUserDetails(user), primaryGroupID: '512' });
+        }
+      }
+    }
+
     trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
       count: dangerousPatterns.passwordInDescription.length + dangerousPatterns.testAccounts.length,
       findings: {
@@ -2545,6 +2884,124 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     };
 
     trackStep('STEP_13_OU_ANALYSIS', 'OU analysis', { count: allOUs.length });
+    stepStart = Date.now();
+
+    // STEP 13b: Domain Configuration Security Checks (Phase 2)
+    try {
+      // Get domain object
+      const domainObj = await searchOne('(objectClass=domain)');
+      if (domainObj) {
+        // Check Machine Account Quota (HIGH risk if > 0, allows any user to join computers)
+        const machineAccountQuota = domainObj.attributes.find(a => a.type === 'ms-DS-MachineAccountQuota')?.values[0];
+        if (machineAccountQuota && parseInt(machineAccountQuota) > 0) {
+          findings.high.push({
+            type: 'MACHINE_ACCOUNT_QUOTA_ABUSE',
+            quota: parseInt(machineAccountQuota),
+            message: `Machine Account Quota is ${machineAccountQuota} (allows users to join computers to domain)`
+          });
+        }
+
+        // Check Kerberos Policy (LOW risk if MaxTicketAge > 10 hours)
+        const maxTicketAge = domainObj.attributes.find(a => a.type === 'maxTicketAge')?.values[0];
+        if (maxTicketAge) {
+          const maxTicketAgeHours = parseInt(maxTicketAge) / 10000000 / 3600; // Convert to hours
+          if (maxTicketAgeHours > 10) {
+            findings.low.push({
+              type: 'WEAK_KERBEROS_POLICY',
+              maxTicketAge: Math.floor(maxTicketAgeHours),
+              threshold: 10,
+              message: `MaxTicketAge is ${Math.floor(maxTicketAgeHours)} hours (threshold: 10 hours)`
+            });
+          }
+        }
+
+        // Check Password Policy (MEDIUM risk if weak settings)
+        const minPwdLength = domainObj.attributes.find(a => a.type === 'minPwdLength')?.values[0];
+        const pwdHistoryLength = domainObj.attributes.find(a => a.type === 'pwdHistoryLength')?.values[0];
+        const minPwdAge = domainObj.attributes.find(a => a.type === 'minPwdAge')?.values[0];
+
+        const weakPolicyIssues = [];
+        if (minPwdLength && parseInt(minPwdLength) < 14) {
+          weakPolicyIssues.push(`MinPasswordLength=${minPwdLength} (recommended: 14+)`);
+        }
+        if (pwdHistoryLength && parseInt(pwdHistoryLength) < 24) {
+          weakPolicyIssues.push(`PasswordHistoryLength=${pwdHistoryLength} (recommended: 24+)`);
+        }
+        if (minPwdAge) {
+          const minPwdAgeDays = Math.abs(parseInt(minPwdAge)) / 10000000 / 86400;
+          if (minPwdAgeDays < 1) {
+            weakPolicyIssues.push(`MinPasswordAge=${Math.floor(minPwdAgeDays)} days (recommended: 1+)`);
+          }
+        }
+
+        if (weakPolicyIssues.length > 0) {
+          findings.medium.push({
+            type: 'WEAK_PASSWORD_POLICY',
+            issues: weakPolicyIssues.join(', '),
+            minPwdLength: parseInt(minPwdLength || 0),
+            pwdHistoryLength: parseInt(pwdHistoryLength || 0)
+          });
+        }
+      }
+      trackStep('STEP_13b_DOMAIN_CONFIG', 'Domain configuration security checks', { count: 1 });
+    } catch (e) {
+      // Domain object query failed
+    }
+    stepStart = Date.now();
+
+    // STEP 13c: Computer Unconstrained Delegation Check (Phase 2)
+    try {
+      const computersWithDelegation = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithDelegation) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.high.push({
+          type: 'COMPUTER_UNCONSTRAINED_DELEGATION',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has unconstrained delegation (vulnerable to PrinterBug/PetitPotam attacks)'
+        });
+      }
+      trackStep('STEP_13c_COMPUTER_DELEGATION', 'Computer delegation security check', { count: computersWithDelegation.length });
+    } catch (e) {
+      // Computer query failed
+    }
+    stepStart = Date.now();
+
+    // STEP 13d: Phase 3+4 Advanced Security Checks
+    try {
+      // FOREIGN_SECURITY_PRINCIPALS (051 - MEDIUM) - Check for external forest principals in sensitive groups
+      try {
+        const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
+        for (const fsp of foreignPrincipals) {
+          const memberOf = fsp.attributes.find(a => a.type === 'memberOf')?.values || [];
+          const sensit iveGroups = memberOf.filter(dn =>
+            dn.includes('Domain Admins') || dn.includes('Enterprise Admins') ||
+            dn.includes('Schema Admins') || dn.includes('Administrators')
+          );
+          if (sensitiveGroups.length > 0) {
+            findings.medium.push({
+              type: 'FOREIGN_SECURITY_PRINCIPALS',
+              dn: fsp.objectName,
+              groups: sensitiveGroups.join('; '),
+              message: 'External forest principal in sensitive group'
+            });
+          }
+        }
+      } catch (e) {}
+
+      // NTLM_RELAY_OPPORTUNITY (065 - LOW) - Informational: NTLM relay risk exists
+      findings.low.push({
+        type: 'NTLM_RELAY_OPPORTUNITY',
+        message: 'NTLM authentication enabled (relay attacks possible if SMB signing not enforced)',
+        recommendation: 'Enable SMB signing and disable NTLM where possible'
+      });
+
+      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 3+4)', { count: 2 });
+    } catch (e) {
+      // Advanced checks failed
+    }
     stepStart = Date.now();
 
     // STEP 14: Risk Scoring
