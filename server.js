@@ -1984,7 +1984,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
         const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
         for (const fsp of foreignPrincipals) {
           const memberOf = fsp.attributes.find(a => a.type === 'memberOf')?.values || [];
-          const sensit iveGroups = memberOf.filter(dn =>
+          const sensitiveGroups = memberOf.filter(dn =>
             dn.includes('Domain Admins') || dn.includes('Enterprise Admins') ||
             dn.includes('Schema Admins') || dn.includes('Administrators')
           );
@@ -3378,7 +3378,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
         for (const fsp of foreignPrincipals) {
           const memberOf = fsp.attributes.find(a => a.type === 'memberOf')?.values || [];
-          const sensit iveGroups = memberOf.filter(dn =>
+          const sensitiveGroups = memberOf.filter(dn =>
             dn.includes('Domain Admins') || dn.includes('Enterprise Admins') ||
             dn.includes('Schema Admins') || dn.includes('Administrators')
           );
