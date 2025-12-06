@@ -1,6 +1,6 @@
 # AD Collector API Guide
 
-## Version: 1.8.0-phase1
+## Version: 1.9.0-phase2
 
 Ce guide décrit tous les endpoints API disponibles dans le Docker AD Collector pour n8n.
 
@@ -750,6 +750,8 @@ The audit executes in 15 logical steps, each with a specific code:
 
 ### Security Findings Categories
 
+**Total: 48 vulnerability types** (v1.7.5: 23 → v1.9.0-phase2: 48 = **+108%**)
+
 **🔴 Critical Findings (8):**
 - `PASSWORD_NOT_REQUIRED` - Account with no password required (UAC 0x20)
 - `REVERSIBLE_ENCRYPTION` - Password stored with reversible encryption (UAC 0x80)
@@ -759,8 +761,9 @@ The audit executes in 15 logical steps, each with a specific code:
 - `UNIX_USER_PASSWORD` - Unix password attribute set (plaintext password risk)
 - `WEAK_ENCRYPTION_DES` - Account configured for DES Kerberos encryption (msDS-SupportedEncryptionTypes)
 - `SENSITIVE_DELEGATION` - Privileged account (adminCount=1) with delegation enabled
+- `GOLDEN_TICKET_RISK` - **[NEW Phase 2]** krbtgt password age > 180 days (Golden Ticket persistence risk)
 
-**🟠 High Findings (13):**
+**🟠 High Findings (15):**
 - `KERBEROASTING_RISK` - Account with SPN (Kerberoasting vulnerable)
 - `CONSTRAINED_DELEGATION` - Account with constrained delegation (msDS-AllowedToDelegateTo)
 - `SID_HISTORY` - SID History attribute populated (privilege escalation risk)
@@ -770,12 +773,14 @@ The audit executes in 15 logical steps, each with a specific code:
 - `DNS_ADMINS_MEMBER` - Member of DnsAdmins (can execute code on DC via DLL)
 - `REPLICATION_RIGHTS` - AdminCount=1 account outside standard admin groups (potential DCSync)
 - `OVERSIZED_GROUP_CRITICAL` - Very large group (>1000 members)
-- `BACKUP_OPERATORS_MEMBER` - **[NEW]** Member of Backup Operators (can read NTDS.dit)
-- `ACCOUNT_OPERATORS_MEMBER` - **[NEW]** Member of Account Operators (can create accounts)
-- `SERVER_OPERATORS_MEMBER` - **[NEW]** Member of Server Operators (RCE via services)
-- `PRINT_OPERATORS_MEMBER` - **[NEW]** Member of Print Operators (SYSTEM escalation)
+- `BACKUP_OPERATORS_MEMBER` - **[Phase 1]** Member of Backup Operators (can read NTDS.dit)
+- `ACCOUNT_OPERATORS_MEMBER` - **[Phase 1]** Member of Account Operators (can create accounts)
+- `SERVER_OPERATORS_MEMBER` - **[Phase 1]** Member of Server Operators (RCE via services)
+- `PRINT_OPERATORS_MEMBER` - **[Phase 1]** Member of Print Operators (SYSTEM escalation)
+- `COMPUTER_UNCONSTRAINED_DELEGATION` - **[NEW Phase 2]** Computer with unconstrained delegation (TGT capture risk)
+- `MACHINE_ACCOUNT_QUOTA_ABUSE` - **[NEW Phase 2]** ms-DS-MachineAccountQuota > 0 (default join abuse)
 
-**🟡 Medium Findings (10):**
+**🟡 Medium Findings (21):**
 - `PASSWORD_VERY_OLD` - Password older than 1 year (pwdLastSet > 365 days)
 - `INACTIVE_365_DAYS` - Account inactive for 365+ days
 - `SHARED_ACCOUNT` - Possible shared account (samAccountName pattern)
@@ -783,16 +788,28 @@ The audit executes in 15 logical steps, each with a specific code:
 - `NOT_IN_PROTECTED_USERS` - Privileged account not in Protected Users group
 - `DELEGATION_PRIVILEGE` - Member of Account/Server Operators (can modify delegation)
 - `OVERSIZED_GROUP_HIGH` - Group with 500-1000 members
-- `PASSWORD_NEVER_EXPIRES` - **[NEW]** Account with password that never expires (UAC 0x10000)
-- `SCHEMA_ADMINS_MEMBER` - **[NEW]** Member of Schema Admins (can modify AD schema)
-- `ENTERPRISE_ADMINS_MEMBER` - **[NEW]** Member of Enterprise Admins (forest control)
-- `DOMAIN_ADMINS_MEMBER` - **[NEW]** Member of Domain Admins (domain control)
-- `ADMINISTRATORS_MEMBER` - **[NEW]** Member of builtin Administrators group
+- `PASSWORD_NEVER_EXPIRES` - **[Phase 1]** Account with password that never expires (UAC 0x10000)
+- `SCHEMA_ADMINS_MEMBER` - **[Phase 1]** Member of Schema Admins (can modify AD schema)
+- `ENTERPRISE_ADMINS_MEMBER` - **[Phase 1]** Member of Enterprise Admins (forest control)
+- `DOMAIN_ADMINS_MEMBER` - **[Phase 1]** Member of Domain Admins (domain control)
+- `ADMINISTRATORS_MEMBER` - **[Phase 1]** Member of builtin Administrators group
+- `WEAK_PASSWORD_POLICY` - **[NEW Phase 2]** Domain password policy weak (minPwdLength < 14, etc.)
+- `DOMAIN_ADMIN_IN_DESCRIPTION` - **[NEW Phase 2]** Admin keywords in description/info fields
+- `LAPS_PASSWORD_LEAKED` - **[NEW Phase 2]** LAPS password exposed in description
+- `DANGEROUS_LOGON_SCRIPTS` - **[NEW Phase 2]** scriptPath attribute set (logon script abuse)
+- `PRE_WINDOWS_2000_ACCESS` - **[NEW Phase 2]** Everyone/Authenticated Users in Pre-Win2K group
+- `EXPIRED_ACCOUNT_IN_ADMIN_GROUP` - **[NEW Phase 2]** Expired account in admin groups
+- `DISABLED_ACCOUNT_IN_ADMIN_GROUP` - **[NEW Phase 2]** Disabled account in admin groups
+- `PRIMARYGROUPID_SPOOFING` - **[NEW Phase 2]** primaryGroupID=512 without Domain Admins memberOf (hidden membership)
+- `FOREIGN_SECURITY_PRINCIPALS` - **[NEW Phase 2]** Cross-forest principals in sensitive groups
 
-**🔵 Low Findings (2):**
+**🔵 Low Findings (4):**
 - `TEST_ACCOUNT` - Possible test account (samAccountName pattern)
-- `USER_CANNOT_CHANGE_PASSWORD` - **[NEW]** User cannot change password (UAC 0x40)
-- `SMARTCARD_NOT_REQUIRED` - **[NEW]** Privileged account without smartcard requirement (UAC 0x40000)
+- `USER_CANNOT_CHANGE_PASSWORD` - **[Phase 1]** User cannot change password (UAC 0x40)
+- `SMARTCARD_NOT_REQUIRED` - **[Phase 1]** Privileged account without smartcard requirement (UAC 0x40000)
+- `WEAK_KERBEROS_POLICY` - **[NEW Phase 2]** Kerberos policy weak (maxTicketAge > 10 hours)
+- `DUPLICATE_SPN` - **[NEW Phase 2]** Same SPN on multiple accounts (Kerberos auth issues)
+- `NTLM_RELAY_OPPORTUNITY` - **[NEW Phase 2]** NTLM enabled (informational - relay attack risk)
 
 **ℹ️ Info Findings:**
 - `PRIVILEGED_GROUP_DOMAINADMINS` - Domain Admins group member count
