@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.1.0",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - Phase 4 Complete: 70 vulnerabilities (ADCS/PKI ESC1-8 + LAPS)",
+  "version": "2.1.1",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.1: Granular SSE logging (70 steps) for better audit visibility",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -1029,7 +1029,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     trackStep('STEP_02_USER_ENUM', 'User enumeration', { count: allUsers.length });
     stepStart = Date.now();
 
-    // STEP 03: Password Security Analysis
+    // Password Security Analysis (STEP_03 to STEP_05)
     const passwordIssues = {
       neverExpires: [],
       notRequired: [],
@@ -1048,12 +1048,6 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const uac = parseInt(user.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
       const dn = user.objectName;
 
-      // Password never expires
-      if (uac & 0x10000) {
-        passwordIssues.neverExpires.push(getUserDetails(user));
-        findings.medium.push({ type: 'PASSWORD_NEVER_EXPIRES', ...getUserDetails(user) });
-      }
-
       // Password not required
       if (uac & 0x20) {
         passwordIssues.notRequired.push(getUserDetails(user));
@@ -1064,6 +1058,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
       if (uac & 0x80) {
         passwordIssues.reversibleEncryption.push(getUserDetails(user));
         findings.critical.push({ type: 'REVERSIBLE_ENCRYPTION', ...getUserDetails(user) });
+      }
+
+      // Password never expires
+      if (uac & 0x10000) {
+        passwordIssues.neverExpires.push(getUserDetails(user));
+        findings.medium.push({ type: 'PASSWORD_NEVER_EXPIRES', ...getUserDetails(user) });
       }
 
       // Cannot change password
@@ -1090,19 +1090,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_03_PASSWORD_SEC', 'Password security analysis', {
-      count: passwordIssues.neverExpires.length + passwordIssues.notRequired.length +
-             passwordIssues.reversibleEncryption.length + passwordIssues.expired.length,
-      findings: {
-        neverExpires: passwordIssues.neverExpires.length,
-        notRequired: passwordIssues.notRequired.length,
-        reversibleEncryption: passwordIssues.reversibleEncryption.length,
-        expired: passwordIssues.expired.length
-      }
-    });
+    trackStep('STEP_03', 'Password not required check', { count: passwordIssues.notRequired.length });
+    trackStep('STEP_04', 'Reversible encryption check', { count: passwordIssues.reversibleEncryption.length });
+    trackStep('STEP_05', 'Password never expires check', { count: passwordIssues.neverExpires.length });
     stepStart = Date.now();
 
-    // STEP 04: Kerberos Security Analysis
+    // Kerberos Security Analysis (STEP_06 to STEP_09)
     const kerberosIssues = {
       spnAccounts: [],
       noPreauth: [],
@@ -1116,16 +1109,16 @@ app.post('/api/audit', authenticate, async (req, res) => {
       const dn = user.objectName;
       const spn = user.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
 
-      // SPN accounts (Kerberoasting risk)
-      if (spn.length > 0) {
-        kerberosIssues.spnAccounts.push({ ...getUserDetails(user), spnCount: spn.length, spns: spn });
-        findings.high.push({ type: 'KERBEROASTING_RISK', ...getUserDetails(user), spnCount: spn.length });
-      }
-
       // No Kerberos preauth (AS-REP roasting risk)
       if (uac & 0x400000) {
         kerberosIssues.noPreauth.push(getUserDetails(user));
         findings.critical.push({ type: 'ASREP_ROASTING_RISK', ...getUserDetails(user) });
+      }
+
+      // SPN accounts (Kerberoasting risk)
+      if (spn.length > 0) {
+        kerberosIssues.spnAccounts.push({ ...getUserDetails(user), spnCount: spn.length, spns: spn });
+        findings.high.push({ type: 'KERBEROASTING_RISK', ...getUserDetails(user), spnCount: spn.length });
       }
 
       // Unconstrained delegation (very dangerous!)
@@ -1142,18 +1135,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_04_KERBEROS_SEC', 'Kerberos security analysis', {
-      count: kerberosIssues.spnAccounts.length + kerberosIssues.noPreauth.length +
-             kerberosIssues.unconstrainedDelegation.length,
-      findings: {
-        spnAccounts: kerberosIssues.spnAccounts.length,
-        noPreauth: kerberosIssues.noPreauth.length,
-        unconstrainedDelegation: kerberosIssues.unconstrainedDelegation.length
-      }
-    });
+    trackStep('STEP_06', 'AS-REP roasting check', { count: kerberosIssues.noPreauth.length });
+    trackStep('STEP_07', 'Kerberoasting check', { count: kerberosIssues.spnAccounts.length });
+    trackStep('STEP_08', 'Unconstrained delegation check', { count: kerberosIssues.unconstrainedDelegation.length });
+    trackStep('STEP_09', 'Constrained delegation check', { count: kerberosIssues.constrainedDelegation.length });
     stepStart = Date.now();
 
-    // STEP 05: Account Status Analysis
+    // Account Status Analysis (STEP_10)
     const accountStatus = {
       disabled: [],
       locked: [],
@@ -1219,7 +1207,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_05_ACCOUNT_STATUS', 'Account status analysis', {
+    trackStep('STEP_10', 'Account status analysis', {
       count: accountStatus.disabled.length + accountStatus.locked.length +
              accountStatus.expired.length + accountStatus.neverLoggedOn.length,
       findings: {
@@ -1230,7 +1218,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 06: Privileged Accounts Analysis
+    // Privileged Accounts Analysis (STEP_11 to STEP_12)
     const privilegedAccounts = {
       domainAdmins: [],
       enterpriseAdmins: [],
@@ -1332,18 +1320,22 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_06_PRIVILEGED_ACCTS', 'Privileged accounts analysis', {
+    trackStep('STEP_11', 'Privileged groups enumeration', {
       count: privilegedAccounts.domainAdmins.length + privilegedAccounts.enterpriseAdmins.length +
              privilegedAccounts.administrators.length,
       findings: {
         domainAdmins: privilegedAccounts.domainAdmins.length,
         enterpriseAdmins: privilegedAccounts.enterpriseAdmins.length,
-        adminCount: privilegedAccounts.adminCount.length
+        administrators: privilegedAccounts.administrators.length
       }
     });
     stepStart = Date.now();
 
-    // STEP 06b: Golden Ticket Risk Assessment
+    // AdminCount check (STEP_12)
+    trackStep('STEP_12', 'AdminCount=1 check', { count: privilegedAccounts.adminCount.length });
+    stepStart = Date.now();
+
+    // Golden Ticket Risk Assessment (STEP_13)
     try {
       const krbtgtUser = await searchOne('(sAMAccountName=krbtgt)');
       if (krbtgtUser) {
@@ -1364,13 +1356,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
           }
         }
       }
-      trackStep('STEP_06b_GOLDEN_TICKET', 'Golden Ticket risk assessment', { count: 1 });
+      trackStep('STEP_13', 'Golden Ticket risk assessment', { count: 1 });
     } catch (e) {
       // krbtgt account not found (unlikely but possible in test environments)
     }
     stepStart = Date.now();
 
-    // STEP 07: Service Accounts Detection
+    // Service Accounts Detection (STEP_14 to STEP_16)
     const serviceAccounts = {
       detectedBySPN: [],
       detectedByName: [],
@@ -1418,16 +1410,12 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_07_SERVICE_ACCTS', 'Service accounts detection', {
-      count: serviceAccounts.detectedBySPN.length + serviceAccounts.detectedByName.length,
-      findings: {
-        bySPN: serviceAccounts.detectedBySPN.length,
-        byName: serviceAccounts.detectedByName.length
-      }
-    });
+    trackStep('STEP_14', 'Service accounts detection (SPN)', { count: serviceAccounts.detectedBySPN.length });
+    trackStep('STEP_15', 'Service accounts detection (name pattern)', { count: serviceAccounts.detectedByName.length });
+    trackStep('STEP_16', 'Duplicate SPN check', { count: spnMap.size - serviceAccounts.detectedBySPN.length });
     stepStart = Date.now();
 
-    // STEP 08: Dangerous Patterns and Advanced Security Detection
+    // Dangerous Patterns and Advanced Security Detection (STEP_17 to STEP_37)
     const dangerousPatterns = {
       passwordInDescription: [],
       testAccounts: [],
@@ -1707,16 +1695,23 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
-      count: dangerousPatterns.passwordInDescription.length + dangerousPatterns.testAccounts.length,
-      findings: {
-        passwordInDesc: dangerousPatterns.passwordInDescription.length,
-        testAccounts: dangerousPatterns.testAccounts.length
-      }
-    });
+    trackStep('STEP_17', 'Password in description check', { count: dangerousPatterns.passwordInDescription.length });
+    trackStep('STEP_18', 'Test accounts check', { count: dangerousPatterns.testAccounts.length });
+    trackStep('STEP_19', 'Shared accounts check', { count: dangerousPatterns.sharedAccounts.length });
+    trackStep('STEP_20', 'Unix user password check', { count: dangerousPatterns.unixUserPassword.length });
+    trackStep('STEP_21', 'SID History check', { count: dangerousPatterns.sidHistory.length });
+    trackStep('STEP_22', 'Weak Kerberos encryption check', { count: advancedSecurity.weakEncryption.length });
+    trackStep('STEP_23', 'Sensitive delegation check', { count: advancedSecurity.sensitiveDelegation.length });
+    trackStep('STEP_24', 'LAPS readable check', { count: advancedSecurity.lapsReadable.length });
+    trackStep('STEP_25', 'DCSync capable check', { count: advancedSecurity.dcsyncCapable.length });
+    trackStep('STEP_26', 'Protected Users bypass check', { count: advancedSecurity.protectedUsersBypass.length });
+    trackStep('STEP_27', 'GPO modify rights check', { count: advancedSecurity.gpoModifyRights.length });
+    trackStep('STEP_28', 'DNS Admins check', { count: advancedSecurity.dnsAdmins.length });
+    trackStep('STEP_29', 'Replication rights check', { count: advancedSecurity.replicationRights.length });
+    trackStep('STEP_30', 'Delegation privilege check', { count: advancedSecurity.delegationPrivilege.length });
     stepStart = Date.now();
 
-    // STEP 09: Temporal Analysis
+    // Temporal Analysis (STEP_38)
     const temporalAnalysis = {
       created7days: [],
       created30days: [],
@@ -1762,7 +1757,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_09_TEMPORAL_ANALYSIS', 'Temporal analysis', {
+    trackStep('STEP_38', 'Temporal analysis', {
       count: temporalAnalysis.created7days.length + temporalAnalysis.created30days.length,
       findings: {
         created7days: temporalAnalysis.created7days.length,
@@ -1771,9 +1766,9 @@ app.post('/api/audit', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 10: Group Analysis
+    // Group Analysis (STEP_39 to STEP_40)
     const allGroups = await searchMany('(objectClass=group)', ['*'], 10000);
-    trackStep('STEP_10_GROUP_ENUM', 'Group enumeration', { count: allGroups.length });
+    trackStep('STEP_39', 'Group enumeration', { count: allGroups.length });
     stepStart = Date.now();
 
     const groupAnalysis = {
@@ -1814,7 +1809,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_11_GROUP_ANALYSIS', 'Group analysis', {
+    trackStep('STEP_40', 'Group analysis', {
       count: groupAnalysis.emptyGroups.length + groupAnalysis.oversizedGroups.length,
       findings: {
         emptyGroups: groupAnalysis.emptyGroups.length,
@@ -1823,7 +1818,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 12: Computer Analysis (if requested)
+    // Computer Analysis (STEP_41, if requested)
     let computerAnalysis = null;
     if (includeComputers) {
       const allComputers = await searchMany('(objectClass=computer)', ['*'], 10000);
@@ -1873,7 +1868,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
         }
       }
 
-      trackStep('STEP_12_COMPUTER_ANALYSIS', 'Computer analysis', {
+      trackStep('STEP_41', 'Computer analysis', {
         count: allComputers.length,
         findings: {
           enabled: computerAnalysis.enabled,
@@ -1884,17 +1879,17 @@ app.post('/api/audit', authenticate, async (req, res) => {
       stepStart = Date.now();
     }
 
-    // STEP 13: OU Analysis
+    // OU Analysis (STEP_42)
     const allOUs = await searchMany('(objectClass=organizationalUnit)', ['*'], 10000);
     const ouAnalysis = {
       total: allOUs.length,
       distribution: {}
     };
 
-    trackStep('STEP_13_OU_ANALYSIS', 'OU analysis', { count: allOUs.length });
+    trackStep('STEP_42', 'OU analysis', { count: allOUs.length });
     stepStart = Date.now();
 
-    // STEP 13b: Domain Configuration Security Checks (Phase 2)
+    // Domain Configuration Security Checks (STEP_43)
     try {
       // Get domain object
       const domainObj = await searchOne('(objectClass=domain)');
@@ -1951,13 +1946,13 @@ app.post('/api/audit', authenticate, async (req, res) => {
           });
         }
       }
-      trackStep('STEP_13b_DOMAIN_CONFIG', 'Domain configuration security checks', { count: 1 });
+      trackStep('STEP_43', 'Domain configuration security checks', { count: 1 });
     } catch (e) {
       // Domain object query failed
     }
     stepStart = Date.now();
 
-    // STEP 13c: Computer Unconstrained Delegation Check (Phase 2)
+    // Computer Unconstrained Delegation Check (STEP_44)
     try {
       const computersWithDelegation = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))', ['sAMAccountName', 'dNSHostName'], 100);
       for (const computer of computersWithDelegation) {
@@ -1971,15 +1966,16 @@ app.post('/api/audit', authenticate, async (req, res) => {
           message: 'Computer has unconstrained delegation (vulnerable to PrinterBug/PetitPotam attacks)'
         });
       }
-      trackStep('STEP_13c_COMPUTER_DELEGATION', 'Computer delegation security check', { count: computersWithDelegation.length });
+      trackStep('STEP_44', 'Computer unconstrained delegation check', { count: computersWithDelegation.length });
     } catch (e) {
       // Computer query failed
     }
     stepStart = Date.now();
 
-    // STEP 13d: Phase 3+4 Advanced Security Checks
+    // Phase 2 Advanced Security Checks (STEP_45 to STEP_46)
     try {
       // FOREIGN_SECURITY_PRINCIPALS (051 - MEDIUM) - Check for external forest principals in sensitive groups
+      let foreignPrincipalsCount = 0;
       try {
         const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
         for (const fsp of foreignPrincipals) {
@@ -1989,6 +1985,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
             dn.includes('Schema Admins') || dn.includes('Administrators')
           );
           if (sensitiveGroups.length > 0) {
+            foreignPrincipalsCount++;
             findings.medium.push({
               type: 'FOREIGN_SECURITY_PRINCIPALS',
               dn: fsp.objectName,
@@ -1998,6 +1995,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_45', 'Foreign security principals check', { count: foreignPrincipalsCount });
 
       // NTLM_RELAY_OPPORTUNITY (065 - LOW) - Informational: NTLM relay risk exists
       findings.low.push({
@@ -2005,18 +2003,18 @@ app.post('/api/audit', authenticate, async (req, res) => {
         message: 'NTLM authentication enabled (relay attacks possible if SMB signing not enforced)',
         recommendation: 'Enable SMB signing and disable NTLM where possible'
       });
-
-      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 2 partiel)', { count: 2 });
+      trackStep('STEP_46', 'NTLM relay opportunity check', { count: 1 });
     } catch (e) {
       // Advanced checks failed
     }
     stepStart = Date.now();
 
     // ==========================================
-    // STEP 13e: PHASE 3 - ACL & Advanced Checks
+    // PHASE 3 - ACL & Advanced Checks (STEP_47 to STEP_58)
     // ==========================================
     try {
-      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse
+      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse (STEP_47)
+      let shadowCredsCount = 0;
       try {
         const shadowCredsAccounts = await searchMany(
           '(msDS-KeyCredentialLink=*)',
@@ -2029,6 +2027,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
           const keyCredLink = account.attributes.find(a => a.type === 'msDS-KeyCredentialLink')?.values || [];
 
           if (keyCredLink.length > 0) {
+            shadowCredsCount++;
             findings.critical.push({
               type: 'SHADOW_CREDENTIALS',
               samAccountName: sam,
@@ -2039,8 +2038,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_47', 'Shadow Credentials check (Phase 3)', { count: shadowCredsCount });
+      stepStart = Date.now();
 
-      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse
+      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse (STEP_48)
+      let rbcdCount = 0;
       try {
         const rbcdAccounts = await searchMany(
           '(msDS-AllowedToActOnBehalfOfOtherIdentity=*)',
@@ -2051,7 +2053,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
         for (const account of rbcdAccounts) {
           const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
           const dnsHostName = account.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
-
+          rbcdCount++;
           findings.critical.push({
             type: 'RBCD_ABUSE',
             samAccountName: sam,
@@ -2061,8 +2063,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
           });
         }
       } catch (e) {}
+      trackStep('STEP_48', 'RBCD abuse check (Phase 3)', { count: rbcdCount });
+      stepStart = Date.now();
 
-      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation
+      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation (STEP_49)
+      let nestedGroupsCount = 0;
       try {
         const nestedGroupIssues = [];
         const sensitiveGroupNames = ['Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Administrators'];
@@ -2080,6 +2085,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
                   u.attributes.find(a => a.type === 'objectClass')?.values.includes('group'));
 
                 if (isNestedGroup) {
+                  nestedGroupsCount++;
                   findings.medium.push({
                     type: 'DANGEROUS_GROUP_NESTING',
                     parentGroup: groupName,
@@ -2092,8 +2098,11 @@ app.post('/api/audit', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_49', 'Dangerous group nesting check (Phase 3)', { count: nestedGroupsCount });
+      stepStart = Date.now();
 
-      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence
+      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence (STEP_50)
+      let adminSDHolderCount = 0;
       try {
         const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
         if (adminSDHolder) {
@@ -2109,6 +2118,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
             // If changed after creation and within last 90 days, might be backdoor
             if (daysSinceChange < 90 && daysSinceChange < daysSinceCreation) {
+              adminSDHolderCount = 1;
               findings.medium.push({
                 type: 'ADMINSDHOLDER_BACKDOOR',
                 dn: adminSDHolder.objectName,
@@ -2120,8 +2130,17 @@ app.post('/api/audit', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_50', 'AdminSDHolder backdoor check (Phase 3)', { count: adminSDHolderCount });
+      stepStart = Date.now();
 
-      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions
+      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions (STEP_51 to STEP_57)
+      let aclGenericAllCount = 0;
+      let aclWriteDACLCount = 0;
+      let aclWriteOwnerCount = 0;
+      let everyoneInACLCount = 0;
+      let aclGenericWriteCount = 0;
+      let aclForceChangePwdCount = 0;
+      let writeSPNAbuseCount = 0;
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
@@ -2168,6 +2187,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // ACL_GENERICALL (070 - HIGH) - GenericAll on sensitive objects
               if (ace.permissions.genericAll && !ace.sid.includes('S-1-5-32-544')) { // Exclude BUILTIN\Administrators
+                aclGenericAllCount++;
                 findings.high.push({
                   type: 'ACL_GENERICALL',
                   targetObject: type,
@@ -2179,6 +2199,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // ACL_WRITEDACL (071 - HIGH) - WriteDACL on sensitive objects
               if (ace.permissions.writeDACL && !ace.sid.includes('S-1-5-32-544')) {
+                aclWriteDACLCount++;
                 findings.high.push({
                   type: 'ACL_WRITEDACL',
                   targetObject: type,
@@ -2190,6 +2211,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // ACL_WRITEOWNER (072 - HIGH) - WriteOwner on sensitive objects
               if (ace.permissions.writeOwner && !ace.sid.includes('S-1-5-32-544')) {
+                aclWriteOwnerCount++;
                 findings.high.push({
                   type: 'ACL_WRITEOWNER',
                   targetObject: type,
@@ -2203,6 +2225,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
               if ((ace.isEveryone || ace.isAuthenticatedUsers) &&
                   (ace.permissions.genericAll || ace.permissions.genericWrite ||
                    ace.permissions.writeDACL || ace.permissions.writeOwner)) {
+                everyoneInACLCount++;
                 findings.medium.push({
                   type: 'EVERYONE_IN_ACL',
                   targetObject: type,
@@ -2216,6 +2239,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // ACL_GENERICWRITE (074 - MEDIUM) - GenericWrite on sensitive objects
               if (ace.permissions.genericWrite && !ace.sid.includes('S-1-5-32-544')) {
+                aclGenericWriteCount++;
                 findings.medium.push({
                   type: 'ACL_GENERICWRITE',
                   targetObject: type,
@@ -2227,6 +2251,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // ACL_FORCECHANGEPASSWORD (075 - MEDIUM) - ControlAccess (ExtendedRight) for password reset
               if (ace.permissions.controlAccess && type.includes('Domain Admins')) {
+                aclForceChangePwdCount++;
                 findings.medium.push({
                   type: 'ACL_FORCECHANGEPASSWORD',
                   targetObject: type,
@@ -2238,6 +2263,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 
               // WRITESPN_ABUSE (076 - MEDIUM) - WriteProperty for targeted Kerberoasting
               if (ace.permissions.writeProperty && type.includes('Domain')) {
+                writeSPNAbuseCount++;
                 findings.medium.push({
                   type: 'WRITESPN_ABUSE',
                   targetObject: type,
@@ -2253,6 +2279,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
         }
 
         // GPO_LINK_POISONING (077 - MEDIUM) - Weak ACLs on GPO links
+        let gpoLinkPoisoningCount = 0;
         try {
           const gpos = await searchMany('(objectClass=groupPolicyContainer)', ['displayName', 'nTSecurityDescriptor'], 50);
 
@@ -2269,6 +2296,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
                   // Check if non-admin has write access to GPO
                   if ((ace.permissions.genericAll || ace.permissions.genericWrite || ace.permissions.writeDACL) &&
                       (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                    gpoLinkPoisoningCount++;
                     findings.medium.push({
                       type: 'GPO_LINK_POISONING',
                       gpoName: displayName,
@@ -2288,13 +2316,20 @@ app.post('/api/audit', authenticate, async (req, res) => {
         // ACL analysis failed
       }
 
-      trackStep('STEP_13e_PHASE3', 'Phase 3 security checks (ACL + Advanced)', { count: 12 });
+      trackStep('STEP_51', 'ACL GenericAll check (Phase 3)', { count: aclGenericAllCount });
+      trackStep('STEP_52', 'ACL WriteDACL check (Phase 3)', { count: aclWriteDACLCount });
+      trackStep('STEP_53', 'ACL WriteOwner check (Phase 3)', { count: aclWriteOwnerCount });
+      trackStep('STEP_54', 'Everyone in ACL check (Phase 3)', { count: everyoneInACLCount });
+      trackStep('STEP_55', 'ACL GenericWrite check (Phase 3)', { count: aclGenericWriteCount });
+      trackStep('STEP_56', 'ACL Force Change Password check (Phase 3)', { count: aclForceChangePwdCount });
+      trackStep('STEP_57', 'WriteSPN abuse check (Phase 3)', { count: writeSPNAbuseCount });
+      trackStep('STEP_58', 'GPO link poisoning check (Phase 3)', { count: gpoLinkPoisoningCount });
+      stepStart = Date.now();
     } catch (e) {
       // Phase 3 checks failed
     }
-    stepStart = Date.now();
 
-    // STEP 13f: PHASE 4 - ADCS/PKI + LAPS Security Checks
+    // PHASE 4 - ADCS/PKI + LAPS Security Checks (STEP_59 to STEP_68)
     try {
       // Get Configuration naming context for ADCS objects
       const configurationNC = domainRoot.attributes.find(a => a.type === 'configurationNamingContext')?.values[0];
@@ -2571,13 +2606,34 @@ app.post('/api/audit', authenticate, async (req, res) => {
         // LAPS analysis failed
       }
 
-      trackStep('STEP_13f_PHASE4', 'Phase 4 security checks (ADCS/PKI + LAPS)', { count: 10 });
+      // Count Phase 4 findings by type for granular tracking
+      const esc1Count = findings.critical.filter(f => f.type === 'ESC1_VULNERABLE_TEMPLATE').length;
+      const esc2Count = findings.critical.filter(f => f.type === 'ESC2_ANY_PURPOSE').length;
+      const esc3Count = findings.high.filter(f => f.type === 'ESC3_ENROLLMENT_AGENT').length;
+      const esc4Count = findings.high.filter(f => f.type === 'ESC4_VULNERABLE_TEMPLATE_ACL').length;
+      const esc6Count = findings.high.filter(f => f.type === 'ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2').length;
+      const esc8Count = findings.medium.filter(f => f.type === 'ESC8_HTTP_ENROLLMENT').length;
+      const lapsNotDeployedCount = findings.medium.filter(f => f.type === 'LAPS_NOT_DEPLOYED').length;
+      const lapsReadableCount = findings.high.filter(f => f.type === 'LAPS_PASSWORD_READABLE').length;
+      const lapsLegacyCount = findings.medium.filter(f => f.type === 'LAPS_LEGACY_ATTRIBUTE').length;
+      const adcsWeakPermCount = findings.medium.filter(f => f.type === 'ADCS_WEAK_PERMISSIONS').length;
+
+      trackStep('STEP_59', 'ESC1 vulnerable template check (Phase 4)', { count: esc1Count });
+      trackStep('STEP_60', 'ESC2 any purpose check (Phase 4)', { count: esc2Count });
+      trackStep('STEP_61', 'ESC3 enrollment agent check (Phase 4)', { count: esc3Count });
+      trackStep('STEP_62', 'ESC4 vulnerable template ACL check (Phase 4)', { count: esc4Count });
+      trackStep('STEP_63', 'ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2 check (Phase 4)', { count: esc6Count });
+      trackStep('STEP_64', 'ESC8 HTTP enrollment check (Phase 4)', { count: esc8Count });
+      trackStep('STEP_65', 'LAPS not deployed check (Phase 4)', { count: lapsNotDeployedCount });
+      trackStep('STEP_66', 'LAPS password readable check (Phase 4)', { count: lapsReadableCount });
+      trackStep('STEP_67', 'LAPS legacy attribute check (Phase 4)', { count: lapsLegacyCount });
+      trackStep('STEP_68', 'ADCS weak permissions check (Phase 4)', { count: adcsWeakPermCount });
+      stepStart = Date.now();
     } catch (e) {
       // Phase 4 checks failed
     }
-    stepStart = Date.now();
 
-    // STEP 14: Risk Scoring
+    // Risk Scoring (STEP_69)
     const riskScore = {
       critical: findings.critical.length,
       high: findings.high.length,
@@ -2606,7 +2662,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     // 5. Final score: base 100 - percentage deduction - direct penalty
     riskScore.score = Math.max(0, Math.min(100, 100 - percentageDeduction - directPenalty));
 
-    trackStep('STEP_14_RISK_SCORING', 'Risk scoring calculation', {
+    trackStep('STEP_69', 'Risk scoring calculation', {
       count: riskScore.total,
       findings: {
         critical: riskScore.critical,
@@ -2616,7 +2672,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
     });
 
     const totalDuration = ((Date.now() - auditStart) / 1000).toFixed(2);
-    trackStep('STEP_15_COMPLETED', 'Audit completed', { count: 1 });
+    trackStep('STEP_70', 'Audit completed', { count: 1 });
 
     // Build final response
     const response = {
@@ -3054,18 +3110,22 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_06_PRIVILEGED_ACCTS', 'Privileged accounts analysis', {
+    trackStep('STEP_11', 'Privileged groups enumeration', {
       count: privilegedAccounts.domainAdmins.length + privilegedAccounts.enterpriseAdmins.length +
              privilegedAccounts.administrators.length,
       findings: {
         domainAdmins: privilegedAccounts.domainAdmins.length,
         enterpriseAdmins: privilegedAccounts.enterpriseAdmins.length,
-        adminCount: privilegedAccounts.adminCount.length
+        administrators: privilegedAccounts.administrators.length
       }
     });
     stepStart = Date.now();
 
-    // STEP 06b: Golden Ticket Risk Assessment
+    // AdminCount check (STEP_12)
+    trackStep('STEP_12', 'AdminCount=1 check', { count: privilegedAccounts.adminCount.length });
+    stepStart = Date.now();
+
+    // Golden Ticket Risk Assessment (STEP_13)
     try {
       const krbtgtUser = await searchOne('(sAMAccountName=krbtgt)');
       if (krbtgtUser) {
@@ -3086,13 +3146,13 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           }
         }
       }
-      trackStep('STEP_06b_GOLDEN_TICKET', 'Golden Ticket risk assessment', { count: 1 });
+      trackStep('STEP_13', 'Golden Ticket risk assessment', { count: 1 });
     } catch (e) {
       // krbtgt account not found (unlikely but possible in test environments)
     }
     stepStart = Date.now();
 
-    // STEP 07: Service Accounts Detection
+    // Service Accounts Detection (STEP_14 to STEP_16)
     const serviceAccounts = {
       detectedBySPN: [],
       detectedByName: [],
@@ -3140,16 +3200,12 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_07_SERVICE_ACCTS', 'Service accounts detection', {
-      count: serviceAccounts.detectedBySPN.length + serviceAccounts.detectedByName.length,
-      findings: {
-        bySPN: serviceAccounts.detectedBySPN.length,
-        byName: serviceAccounts.detectedByName.length
-      }
-    });
+    trackStep('STEP_14', 'Service accounts detection (SPN)', { count: serviceAccounts.detectedBySPN.length });
+    trackStep('STEP_15', 'Service accounts detection (name pattern)', { count: serviceAccounts.detectedByName.length });
+    trackStep('STEP_16', 'Duplicate SPN check', { count: spnMap.size - serviceAccounts.detectedBySPN.length });
     stepStart = Date.now();
 
-    // STEP 08: Dangerous Patterns and Advanced Security Detection
+    // Dangerous Patterns and Advanced Security Detection (STEP_17 to STEP_37)
     const dangerousPatterns = {
       passwordInDescription: [],
       testAccounts: [],
@@ -3389,16 +3445,23 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_08_DANGEROUS_PATTERNS', 'Dangerous patterns and advanced security detection', {
-      count: dangerousPatterns.passwordInDescription.length + dangerousPatterns.testAccounts.length,
-      findings: {
-        passwordInDesc: dangerousPatterns.passwordInDescription.length,
-        testAccounts: dangerousPatterns.testAccounts.length
-      }
-    });
+    trackStep('STEP_17', 'Password in description check', { count: dangerousPatterns.passwordInDescription.length });
+    trackStep('STEP_18', 'Test accounts check', { count: dangerousPatterns.testAccounts.length });
+    trackStep('STEP_19', 'Shared accounts check', { count: dangerousPatterns.sharedAccounts.length });
+    trackStep('STEP_20', 'Unix user password check', { count: dangerousPatterns.unixUserPassword.length });
+    trackStep('STEP_21', 'SID History check', { count: dangerousPatterns.sidHistory.length });
+    trackStep('STEP_22', 'Weak Kerberos encryption check', { count: advancedSecurity.weakEncryption.length });
+    trackStep('STEP_23', 'Sensitive delegation check', { count: advancedSecurity.sensitiveDelegation.length });
+    trackStep('STEP_24', 'LAPS readable check', { count: advancedSecurity.lapsReadable.length });
+    trackStep('STEP_25', 'DCSync capable check', { count: advancedSecurity.dcsyncCapable.length });
+    trackStep('STEP_26', 'Protected Users bypass check', { count: advancedSecurity.protectedUsersBypass.length });
+    trackStep('STEP_27', 'GPO modify rights check', { count: advancedSecurity.gpoModifyRights.length });
+    trackStep('STEP_28', 'DNS Admins check', { count: advancedSecurity.dnsAdmins.length });
+    trackStep('STEP_29', 'Replication rights check', { count: advancedSecurity.replicationRights.length });
+    trackStep('STEP_30', 'Delegation privilege check', { count: advancedSecurity.delegationPrivilege.length });
     stepStart = Date.now();
 
-    // STEP 09: Temporal Analysis
+    // Temporal Analysis (STEP_38)
     const temporalAnalysis = {
       created7days: [],
       created30days: [],
@@ -3444,7 +3507,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_09_TEMPORAL_ANALYSIS', 'Temporal analysis', {
+    trackStep('STEP_38', 'Temporal analysis', {
       count: temporalAnalysis.created7days.length + temporalAnalysis.created30days.length,
       findings: {
         created7days: temporalAnalysis.created7days.length,
@@ -3453,9 +3516,9 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 10: Group Analysis
+    // Group Analysis (STEP_39 to STEP_40)
     const allGroups = await searchMany('(objectClass=group)', ['*'], 10000);
-    trackStep('STEP_10_GROUP_ENUM', 'Group enumeration', { count: allGroups.length });
+    trackStep('STEP_39', 'Group enumeration', { count: allGroups.length });
     stepStart = Date.now();
 
     const groupAnalysis = {
@@ -3493,7 +3556,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       }
     }
 
-    trackStep('STEP_11_GROUP_ANALYSIS', 'Group analysis', {
+    trackStep('STEP_40', 'Group analysis', {
       count: groupAnalysis.emptyGroups.length + groupAnalysis.oversizedGroups.length,
       findings: {
         emptyGroups: groupAnalysis.emptyGroups.length,
@@ -3502,7 +3565,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
     });
     stepStart = Date.now();
 
-    // STEP 12: Computer Analysis (if requested)
+    // Computer Analysis (STEP_41, if requested)
     let computerAnalysis = null;
     if (includeComputers) {
       const allComputers = await searchMany('(objectClass=computer)', ['*'], 10000);
@@ -3550,7 +3613,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         }
       }
 
-      trackStep('STEP_12_COMPUTER_ANALYSIS', 'Computer analysis', {
+      trackStep('STEP_41', 'Computer analysis', {
         count: allComputers.length,
         findings: {
           enabled: computerAnalysis.enabled,
@@ -3561,17 +3624,17 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
       stepStart = Date.now();
     }
 
-    // STEP 13: OU Analysis
+    // OU Analysis (STEP_42)
     const allOUs = await searchMany('(objectClass=organizationalUnit)', ['*'], 10000);
     const ouAnalysis = {
       total: allOUs.length,
       distribution: {}
     };
 
-    trackStep('STEP_13_OU_ANALYSIS', 'OU analysis', { count: allOUs.length });
+    trackStep('STEP_42', 'OU analysis', { count: allOUs.length });
     stepStart = Date.now();
 
-    // STEP 13b: Domain Configuration Security Checks (Phase 2)
+    // Domain Configuration Security Checks (STEP_43)
     try {
       // Get domain object
       const domainObj = await searchOne('(objectClass=domain)');
@@ -3628,13 +3691,13 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           });
         }
       }
-      trackStep('STEP_13b_DOMAIN_CONFIG', 'Domain configuration security checks', { count: 1 });
+      trackStep('STEP_43', 'Domain configuration security checks', { count: 1 });
     } catch (e) {
       // Domain object query failed
     }
     stepStart = Date.now();
 
-    // STEP 13c: Computer Unconstrained Delegation Check (Phase 2)
+    // Computer Unconstrained Delegation Check (STEP_44)
     try {
       const computersWithDelegation = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))', ['sAMAccountName', 'dNSHostName'], 100);
       for (const computer of computersWithDelegation) {
@@ -3648,15 +3711,16 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           message: 'Computer has unconstrained delegation (vulnerable to PrinterBug/PetitPotam attacks)'
         });
       }
-      trackStep('STEP_13c_COMPUTER_DELEGATION', 'Computer delegation security check', { count: computersWithDelegation.length });
+      trackStep('STEP_44', 'Computer unconstrained delegation check', { count: computersWithDelegation.length });
     } catch (e) {
       // Computer query failed
     }
     stepStart = Date.now();
 
-    // STEP 13d: Phase 3+4 Advanced Security Checks
+    // Phase 2 Advanced Security Checks (STEP_45 to STEP_46)
     try {
       // FOREIGN_SECURITY_PRINCIPALS (051 - MEDIUM) - Check for external forest principals in sensitive groups
+      let foreignPrincipalsCount = 0;
       try {
         const foreignPrincipals = await searchMany('(objectClass=foreignSecurityPrincipal)', ['*'], 100);
         for (const fsp of foreignPrincipals) {
@@ -3666,6 +3730,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
             dn.includes('Schema Admins') || dn.includes('Administrators')
           );
           if (sensitiveGroups.length > 0) {
+            foreignPrincipalsCount++;
             findings.medium.push({
               type: 'FOREIGN_SECURITY_PRINCIPALS',
               dn: fsp.objectName,
@@ -3675,6 +3740,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_45', 'Foreign security principals check', { count: foreignPrincipalsCount });
 
       // NTLM_RELAY_OPPORTUNITY (065 - LOW) - Informational: NTLM relay risk exists
       findings.low.push({
@@ -3682,18 +3748,18 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         message: 'NTLM authentication enabled (relay attacks possible if SMB signing not enforced)',
         recommendation: 'Enable SMB signing and disable NTLM where possible'
       });
-
-      trackStep('STEP_13d_ADVANCED_CHECKS', 'Advanced security checks (Phase 2 partiel)', { count: 2 });
+      trackStep('STEP_46', 'NTLM relay opportunity check', { count: 1 });
     } catch (e) {
       // Advanced checks failed
     }
     stepStart = Date.now();
 
     // ==========================================
-    // STEP 13e: PHASE 3 - ACL & Advanced Checks
+    // PHASE 3 - ACL & Advanced Checks (STEP_47 to STEP_58)
     // ==========================================
     try {
-      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse
+      // SHADOW_CREDENTIALS (066 - CRITICAL) - msDS-KeyCredentialLink abuse (STEP_47)
+      let shadowCredsCount = 0;
       try {
         const shadowCredsAccounts = await searchMany(
           '(msDS-KeyCredentialLink=*)',
@@ -3706,6 +3772,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           const keyCredLink = account.attributes.find(a => a.type === 'msDS-KeyCredentialLink')?.values || [];
 
           if (keyCredLink.length > 0) {
+            shadowCredsCount++;
             findings.critical.push({
               type: 'SHADOW_CREDENTIALS',
               samAccountName: sam,
@@ -3716,8 +3783,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_47', 'Shadow Credentials check (Phase 3)', { count: shadowCredsCount });
+      stepStart = Date.now();
 
-      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse
+      // RBCD_ABUSE (067 - CRITICAL) - Resource-Based Constrained Delegation abuse (STEP_48)
+      let rbcdCount = 0;
       try {
         const rbcdAccounts = await searchMany(
           '(msDS-AllowedToActOnBehalfOfOtherIdentity=*)',
@@ -3728,7 +3798,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         for (const account of rbcdAccounts) {
           const sam = account.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
           const dnsHostName = account.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
-
+          rbcdCount++;
           findings.critical.push({
             type: 'RBCD_ABUSE',
             samAccountName: sam,
@@ -3738,8 +3808,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           });
         }
       } catch (e) {}
+      trackStep('STEP_48', 'RBCD abuse check (Phase 3)', { count: rbcdCount });
+      stepStart = Date.now();
 
-      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation
+      // DANGEROUS_GROUP_NESTING (068 - MEDIUM) - Nested groups leading to unintended privilege escalation (STEP_49)
+      let nestedGroupsCount = 0;
       try {
         const nestedGroupIssues = [];
         const sensitiveGroupNames = ['Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Administrators'];
@@ -3757,6 +3830,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
                   u.attributes.find(a => a.type === 'objectClass')?.values.includes('group'));
 
                 if (isNestedGroup) {
+                  nestedGroupsCount++;
                   findings.medium.push({
                     type: 'DANGEROUS_GROUP_NESTING',
                     parentGroup: groupName,
@@ -3769,8 +3843,11 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_49', 'Dangerous group nesting check (Phase 3)', { count: nestedGroupsCount });
+      stepStart = Date.now();
 
-      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence
+      // ADMINSDHOLDER_BACKDOOR (069 - MEDIUM) - AdminSDHolder modifications for persistence (STEP_50)
+      let adminSDHolderCount = 0;
       try {
         const adminSDHolder = await searchOne('(cn=AdminSDHolder)');
         if (adminSDHolder) {
@@ -3786,6 +3863,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
             // If changed after creation and within last 90 days, might be backdoor
             if (daysSinceChange < 90 && daysSinceChange < daysSinceCreation) {
+              adminSDHolderCount = 1;
               findings.medium.push({
                 type: 'ADMINSDHOLDER_BACKDOOR',
                 dn: adminSDHolder.objectName,
@@ -3797,8 +3875,17 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
           }
         }
       } catch (e) {}
+      trackStep('STEP_50', 'AdminSDHolder backdoor check (Phase 3)', { count: adminSDHolderCount });
+      stepStart = Date.now();
 
-      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions
+      // ACL-Based Detections - Analyze nTSecurityDescriptor for dangerous permissions (STEP_51 to STEP_57)
+      let aclGenericAllCount = 0;
+      let aclWriteDACLCount = 0;
+      let aclWriteOwnerCount = 0;
+      let everyoneInACLCount = 0;
+      let aclGenericWriteCount = 0;
+      let aclForceChangePwdCount = 0;
+      let writeSPNAbuseCount = 0;
       try {
         // Get sensitive objects to check ACLs on (Domain root, AdminSDHolder, Domain Admins group, etc.)
         const sensitiveObjects = [];
@@ -3845,6 +3932,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // ACL_GENERICALL (070 - HIGH) - GenericAll on sensitive objects
               if (ace.permissions.genericAll && !ace.sid.includes('S-1-5-32-544')) { // Exclude BUILTIN\Administrators
+                aclGenericAllCount++;
                 findings.high.push({
                   type: 'ACL_GENERICALL',
                   targetObject: type,
@@ -3856,6 +3944,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // ACL_WRITEDACL (071 - HIGH) - WriteDACL on sensitive objects
               if (ace.permissions.writeDACL && !ace.sid.includes('S-1-5-32-544')) {
+                aclWriteDACLCount++;
                 findings.high.push({
                   type: 'ACL_WRITEDACL',
                   targetObject: type,
@@ -3867,6 +3956,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // ACL_WRITEOWNER (072 - HIGH) - WriteOwner on sensitive objects
               if (ace.permissions.writeOwner && !ace.sid.includes('S-1-5-32-544')) {
+                aclWriteOwnerCount++;
                 findings.high.push({
                   type: 'ACL_WRITEOWNER',
                   targetObject: type,
@@ -3880,6 +3970,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
               if ((ace.isEveryone || ace.isAuthenticatedUsers) &&
                   (ace.permissions.genericAll || ace.permissions.genericWrite ||
                    ace.permissions.writeDACL || ace.permissions.writeOwner)) {
+                everyoneInACLCount++;
                 findings.medium.push({
                   type: 'EVERYONE_IN_ACL',
                   targetObject: type,
@@ -3893,6 +3984,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // ACL_GENERICWRITE (074 - MEDIUM) - GenericWrite on sensitive objects
               if (ace.permissions.genericWrite && !ace.sid.includes('S-1-5-32-544')) {
+                aclGenericWriteCount++;
                 findings.medium.push({
                   type: 'ACL_GENERICWRITE',
                   targetObject: type,
@@ -3904,6 +3996,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // ACL_FORCECHANGEPASSWORD (075 - MEDIUM) - ControlAccess (ExtendedRight) for password reset
               if (ace.permissions.controlAccess && type.includes('Domain Admins')) {
+                aclForceChangePwdCount++;
                 findings.medium.push({
                   type: 'ACL_FORCECHANGEPASSWORD',
                   targetObject: type,
@@ -3915,6 +4008,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
 
               // WRITESPN_ABUSE (076 - MEDIUM) - WriteProperty for targeted Kerberoasting
               if (ace.permissions.writeProperty && type.includes('Domain')) {
+                writeSPNAbuseCount++;
                 findings.medium.push({
                   type: 'WRITESPN_ABUSE',
                   targetObject: type,
@@ -3930,6 +4024,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         }
 
         // GPO_LINK_POISONING (077 - MEDIUM) - Weak ACLs on GPO links
+        let gpoLinkPoisoningCount = 0;
         try {
           const gpos = await searchMany('(objectClass=groupPolicyContainer)', ['displayName', 'nTSecurityDescriptor'], 50);
 
@@ -3946,6 +4041,7 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
                   // Check if non-admin has write access to GPO
                   if ((ace.permissions.genericAll || ace.permissions.genericWrite || ace.permissions.writeDACL) &&
                       (ace.isEveryone || ace.isAuthenticatedUsers)) {
+                    gpoLinkPoisoningCount++;
                     findings.medium.push({
                       type: 'GPO_LINK_POISONING',
                       gpoName: displayName,
@@ -3965,13 +4061,20 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         // ACL analysis failed
       }
 
-      trackStep('STEP_13e_PHASE3', 'Phase 3 security checks (ACL + Advanced)', { count: 12 });
+      trackStep('STEP_51', 'ACL GenericAll check (Phase 3)', { count: aclGenericAllCount });
+      trackStep('STEP_52', 'ACL WriteDACL check (Phase 3)', { count: aclWriteDACLCount });
+      trackStep('STEP_53', 'ACL WriteOwner check (Phase 3)', { count: aclWriteOwnerCount });
+      trackStep('STEP_54', 'Everyone in ACL check (Phase 3)', { count: everyoneInACLCount });
+      trackStep('STEP_55', 'ACL GenericWrite check (Phase 3)', { count: aclGenericWriteCount });
+      trackStep('STEP_56', 'ACL Force Change Password check (Phase 3)', { count: aclForceChangePwdCount });
+      trackStep('STEP_57', 'WriteSPN abuse check (Phase 3)', { count: writeSPNAbuseCount });
+      trackStep('STEP_58', 'GPO link poisoning check (Phase 3)', { count: gpoLinkPoisoningCount });
+      stepStart = Date.now();
     } catch (e) {
       // Phase 3 checks failed
     }
-    stepStart = Date.now();
 
-    // STEP 13f: PHASE 4 - ADCS/PKI + LAPS Security Checks
+    // PHASE 4 - ADCS/PKI + LAPS Security Checks (STEP_59 to STEP_68)
     try {
       // Get Configuration naming context for ADCS objects
       const configurationNC = domainRoot.attributes.find(a => a.type === 'configurationNamingContext')?.values[0];
@@ -4248,13 +4351,34 @@ app.post('/api/audit/stream', authenticate, async (req, res) => {
         // LAPS analysis failed
       }
 
-      trackStep('STEP_13f_PHASE4', 'Phase 4 security checks (ADCS/PKI + LAPS)', { count: 10 });
+      // Count Phase 4 findings by type for granular tracking
+      const esc1Count = findings.critical.filter(f => f.type === 'ESC1_VULNERABLE_TEMPLATE').length;
+      const esc2Count = findings.critical.filter(f => f.type === 'ESC2_ANY_PURPOSE').length;
+      const esc3Count = findings.high.filter(f => f.type === 'ESC3_ENROLLMENT_AGENT').length;
+      const esc4Count = findings.high.filter(f => f.type === 'ESC4_VULNERABLE_TEMPLATE_ACL').length;
+      const esc6Count = findings.high.filter(f => f.type === 'ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2').length;
+      const esc8Count = findings.medium.filter(f => f.type === 'ESC8_HTTP_ENROLLMENT').length;
+      const lapsNotDeployedCount = findings.medium.filter(f => f.type === 'LAPS_NOT_DEPLOYED').length;
+      const lapsReadableCount = findings.high.filter(f => f.type === 'LAPS_PASSWORD_READABLE').length;
+      const lapsLegacyCount = findings.medium.filter(f => f.type === 'LAPS_LEGACY_ATTRIBUTE').length;
+      const adcsWeakPermCount = findings.medium.filter(f => f.type === 'ADCS_WEAK_PERMISSIONS').length;
+
+      trackStep('STEP_59', 'ESC1 vulnerable template check (Phase 4)', { count: esc1Count });
+      trackStep('STEP_60', 'ESC2 any purpose check (Phase 4)', { count: esc2Count });
+      trackStep('STEP_61', 'ESC3 enrollment agent check (Phase 4)', { count: esc3Count });
+      trackStep('STEP_62', 'ESC4 vulnerable template ACL check (Phase 4)', { count: esc4Count });
+      trackStep('STEP_63', 'ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2 check (Phase 4)', { count: esc6Count });
+      trackStep('STEP_64', 'ESC8 HTTP enrollment check (Phase 4)', { count: esc8Count });
+      trackStep('STEP_65', 'LAPS not deployed check (Phase 4)', { count: lapsNotDeployedCount });
+      trackStep('STEP_66', 'LAPS password readable check (Phase 4)', { count: lapsReadableCount });
+      trackStep('STEP_67', 'LAPS legacy attribute check (Phase 4)', { count: lapsLegacyCount });
+      trackStep('STEP_68', 'ADCS weak permissions check (Phase 4)', { count: adcsWeakPermCount });
+      stepStart = Date.now();
     } catch (e) {
       // Phase 4 checks failed
     }
-    stepStart = Date.now();
 
-    // STEP 14: Risk Scoring
+    // Risk Scoring (STEP_69)
     const riskScore = {
       critical: findings.critical.length,
       high: findings.high.length,
