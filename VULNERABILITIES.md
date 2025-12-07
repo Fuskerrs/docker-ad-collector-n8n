@@ -17,7 +17,8 @@ The AD Collector currently detects **71 vulnerability types** across 4 severity 
 - v2.0.0: 60 vulnerabilities (+12) - Phase 3: Complete ACL parsing
 - v2.1.0: 70 vulnerabilities (+10) - Phase 4: ADCS/PKI + LAPS
 - v2.2.0: 70 vulnerabilities - Major refactor with 58 audit steps
-- **v2.2.3**: 71 vulnerabilities (+1) - Added DOMAIN_ADMIN_IN_DESCRIPTION detection
+- v2.2.3: 71 vulnerabilities (+1) - Added DOMAIN_ADMIN_IN_DESCRIPTION detection
+- **v2.2.4**: 71 vulnerabilities - Fixed SSE stream missing detections + added SSE step mapping table
 
 ---
 
