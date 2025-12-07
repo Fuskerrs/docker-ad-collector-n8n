@@ -2,12 +2,12 @@
 
 ## Overview
 
-The AD Collector currently detects **70+ vulnerability types** across 4 severity levels, providing comprehensive Active Directory security assessment.
+The AD Collector currently detects **71 vulnerability types** across 4 severity levels, providing comprehensive Active Directory security assessment.
 
 **Statistics:**
 - 🔴 **Critical**: 12 vulnerabilities
 - 🟠 **High**: 22 vulnerabilities
-- 🟡 **Medium**: 32 vulnerabilities
+- 🟡 **Medium**: 33 vulnerabilities
 - 🔵 **Low**: 4 vulnerabilities
 
 **Evolution:**
@@ -16,7 +16,86 @@ The AD Collector currently detects **70+ vulnerability types** across 4 severity
 - v1.9.0-phase2: 48 vulnerabilities (+25)
 - v2.0.0: 60 vulnerabilities (+12) - Phase 3: Complete ACL parsing
 - v2.1.0: 70 vulnerabilities (+10) - Phase 4: ADCS/PKI + LAPS
-- **v2.2.0**: 70 vulnerabilities - Major refactor with 58 audit steps
+- v2.2.0: 70 vulnerabilities - Major refactor with 58 audit steps
+- **v2.2.3**: 71 vulnerabilities (+1) - Added DOMAIN_ADMIN_IN_DESCRIPTION detection
+
+---
+
+## Complete Vulnerability Detection List
+
+| # | Vulnerability Name | Brief Description | Detected |
+|---|-------------------|-------------------|----------|
+| 1 | PASSWORD_NOT_REQUIRED | Account does not require a password | ✅ |
+| 2 | REVERSIBLE_ENCRYPTION | Password stored with reversible encryption | ✅ |
+| 3 | ASREP_ROASTING_RISK | Account without Kerberos pre-authentication | ✅ |
+| 4 | UNCONSTRAINED_DELEGATION | Unconstrained Kerberos delegation enabled | ✅ |
+| 5 | PASSWORD_IN_DESCRIPTION | Password detected in description field | ✅ |
+| 6 | UNIX_USER_PASSWORD | Unix password attribute present (cleartext) | ✅ |
+| 7 | WEAK_ENCRYPTION_DES | DES encryption algorithms enabled | ✅ |
+| 8 | SENSITIVE_DELEGATION | Admin account with unconstrained delegation | ✅ |
+| 9 | GOLDEN_TICKET_RISK | krbtgt password unchanged for 180+ days | ✅ |
+| 10 | SHADOW_CREDENTIALS | msDS-KeyCredentialLink attribute configured | ✅ |
+| 11 | RBCD_ABUSE | Resource-Based Constrained Delegation configured | ✅ |
+| 12 | ESC1_VULNERABLE_TEMPLATE | ADCS template with client auth + enrollee supplies subject | ✅ |
+| 13 | KERBEROASTING_RISK | User account with Service Principal Name | ✅ |
+| 14 | CONSTRAINED_DELEGATION | Constrained Kerberos delegation configured | ✅ |
+| 15 | SID_HISTORY | sIDHistory attribute present | ✅ |
+| 16 | WEAK_ENCRYPTION_RC4 | RC4 encryption only (without AES) | ✅ |
+| 17 | WEAK_ENCRYPTION_FLAG | USE_DES_KEY_ONLY flag enabled | ✅ |
+| 18 | GPO_MODIFY_RIGHTS | Member of Group Policy Creator Owners | ✅ |
+| 19 | DNS_ADMINS_MEMBER | Member of DnsAdmins group | ✅ |
+| 20 | REPLICATION_RIGHTS | Account with potential DCSync capability | ✅ |
+| 21 | OVERSIZED_GROUP_CRITICAL | Group with 1000+ members | ✅ |
+| 22 | BACKUP_OPERATORS_MEMBER | Member of Backup Operators group | ✅ |
+| 23 | ACCOUNT_OPERATORS_MEMBER | Member of Account Operators group | ✅ |
+| 24 | SERVER_OPERATORS_MEMBER | Member of Server Operators group | ✅ |
+| 25 | PRINT_OPERATORS_MEMBER | Member of Print Operators group | ✅ |
+| 26 | DCSYNC_CAPABLE | Account with replication permissions | ✅ |
+| 27 | ACL_GENERICALL | GenericAll permission on sensitive objects | ✅ |
+| 28 | ACL_WRITEDACL | WriteDACL permission on sensitive objects | ✅ |
+| 29 | ACL_WRITEOWNER | WriteOwner permission on sensitive objects | ✅ |
+| 30 | ESC2_ANY_PURPOSE | ADCS template with Any Purpose EKU | ✅ |
+| 31 | ESC3_ENROLLMENT_AGENT | ADCS template with enrollment agent EKU | ✅ |
+| 32 | ESC4_VULNERABLE_TEMPLATE_ACL | Certificate template with weak ACLs | ✅ |
+| 33 | ESC6_EDITF_ATTRIBUTESUBJECTALTNAME2 | ADCS CA with EDITF_ATTRIBUTESUBJECTALTNAME2 flag | ✅ |
+| 34 | LAPS_PASSWORD_READABLE | Non-admin users can read LAPS passwords | ✅ |
+| 35 | PASSWORD_NEVER_EXPIRES | Password set to never expire | ✅ |
+| 36 | PASSWORD_VERY_OLD | Password older than 365 days | ✅ |
+| 37 | INACTIVE_365_DAYS | Account inactive for 365+ days | ✅ |
+| 38 | TEST_ACCOUNT | Account name suggests test/demo purpose | ✅ |
+| 39 | SHARED_ACCOUNT | Account name suggests shared usage | ✅ |
+| 40 | OVERSIZED_GROUP_HIGH | Group with 500-1000 members | ✅ |
+| 41 | OVERSIZED_GROUP | Group with 100-500 members | ✅ |
+| 42 | NOT_IN_PROTECTED_USERS | Privileged account not in Protected Users group | ✅ |
+| 43 | DUPLICATE_SPN | Service Principal Name registered multiple times | ✅ |
+| 44 | USER_CANNOT_CHANGE_PASSWORD | User forbidden from changing own password | ✅ |
+| 45 | SMARTCARD_NOT_REQUIRED | Account exempt from smartcard requirement | ✅ |
+| 46 | WEAK_PASSWORD_POLICY | Domain password policy below minimum standards | ✅ |
+| 47 | WEAK_KERBEROS_POLICY | Kerberos ticket lifetimes exceed recommendations | ✅ |
+| 48 | MACHINE_ACCOUNT_QUOTA_ABUSE | ms-DS-MachineAccountQuota > 0 | ✅ |
+| 49 | PRE_WINDOWS_2000_ACCESS | Pre-Windows 2000 Compatible Access group has members | ✅ |
+| 50 | DELEGATION_PRIVILEGE | Account has SeEnableDelegationPrivilege | ✅ |
+| 51 | DANGEROUS_GROUP_NESTING | Sensitive group nested in less sensitive group | ✅ |
+| 52 | ADMINSDHOLDER_BACKDOOR | Unexpected ACL on AdminSDHolder object | ✅ |
+| 53 | ACL_GENERICWRITE | GenericWrite permission on sensitive objects | ✅ |
+| 54 | ACL_FORCECHANGEPASSWORD | ExtendedRight to force password change | ✅ |
+| 55 | EVERYONE_IN_ACL | Everyone/Authenticated Users with write permissions | ✅ |
+| 56 | WRITESPN_ABUSE | WriteProperty permission for servicePrincipalName | ✅ |
+| 57 | GPO_LINK_POISONING | Weak ACLs on Group Policy Objects | ✅ |
+| 58 | ESC8_HTTP_ENROLLMENT | ADCS web enrollment via HTTP | ✅ |
+| 59 | LAPS_NOT_DEPLOYED | LAPS not deployed on domain computers | ✅ |
+| 60 | LAPS_LEGACY_ATTRIBUTE | Legacy LAPS attribute used instead of Windows LAPS | ✅ |
+| 61 | ADCS_WEAK_PERMISSIONS | Weak permissions on ADCS objects or templates | ✅ |
+| 62 | COMPUTER_UNCONSTRAINED_DELEGATION | Computer account with unconstrained delegation | ✅ |
+| 63 | FOREIGN_SECURITY_PRINCIPALS | Foreign security principals from external forests | ✅ |
+| 64 | NTLM_RELAY_OPPORTUNITY | LDAP signing or channel binding not enforced | ✅ |
+| 65 | DISABLED_ACCOUNT_IN_ADMIN_GROUP | Disabled account still in privileged group | ✅ |
+| 66 | EXPIRED_ACCOUNT_IN_ADMIN_GROUP | Expired account still in privileged group | ✅ |
+| 67 | LAPS_PASSWORD_SET | LAPS password successfully managed (informational) | ✅ |
+| 68 | LAPS_PASSWORD_LEAKED | LAPS password visible to too many users | ✅ |
+| 69 | PRIMARYGROUPID_SPOOFING | Non-standard primaryGroupID value | ✅ |
+| 70 | DANGEROUS_LOGON_SCRIPTS | Logon scripts with weak ACLs | ✅ |
+| 71 | DOMAIN_ADMIN_IN_DESCRIPTION | Sensitive terms in description field | ✅ |
 
 ---
 
@@ -1045,6 +1124,20 @@ Set-ADUser -Identity username -Replace @{primaryGroupID=513}
 **Detection:** Logon script path with weak ACLs
 
 **Remediation:** Ensure logon scripts are read-only for users
+
+---
+
+### 71. DOMAIN_ADMIN_IN_DESCRIPTION
+**Description:** Description field contains sensitive terms like "domain admin" or "administrator"
+
+**Impact:** Information disclosure that may aid attackers in targeting privileged accounts
+
+**Detection:** Regex `/domain\s*admin|administrator/i` in description or info field
+
+**Remediation:**
+```powershell
+Set-ADUser -Identity username -Description "Sanitized description without sensitive information"
+```
 
 ---
 
