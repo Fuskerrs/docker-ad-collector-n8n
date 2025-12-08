@@ -26,6 +26,12 @@ if (fs.existsSync(certPath)) {
 const READ_ONLY_MODE = process.env.READ_ONLY_MODE === 'true';
 const TOKEN_MAX_USES = parseInt(process.env.TOKEN_MAX_USES || '3'); // Default: 3 uses per token
 
+// Endpoint mode: 'full', 'audit-only', 'no-audit' (v2.4.0 Security Enhancement)
+// - full: All endpoints enabled (default)
+// - audit-only: Only audit endpoints enabled
+// - no-audit: All endpoints except audit
+const ENDPOINT_MODE = process.env.ENDPOINT_MODE || (READ_ONLY_MODE ? 'audit-only' : 'full');
+
 const config = {
   port: process.env.PORT || 8443,
   ldap: {
@@ -99,7 +105,8 @@ console.log(`  TLS Verify: ${config.ldap.tlsOptions.rejectUnauthorized}`);
 console.log(`  Bind Address: ${process.env.BIND_ADDRESS || '127.0.0.1'}`);
 console.log(`  Token Expiry: ${process.env.TOKEN_EXPIRY || '1h'}`);
 console.log(`  Token Max Uses: ${TOKEN_MAX_USES === 0 || process.env.TOKEN_MAX_USES === 'unlimited' ? 'unlimited' : TOKEN_MAX_USES}`);
-console.log(`  Read-Only Mode: ${READ_ONLY_MODE}`);
+console.log(`  Endpoint Mode: ${ENDPOINT_MODE}`);
+console.log(`  Read-Only Mode: ${READ_ONLY_MODE} (deprecated, use ENDPOINT_MODE)`);
 console.log('========================================');
 if (process.env.API_TOKEN) {
   console.log('✅ Using API Token from environment variable');
@@ -303,12 +310,23 @@ function checkTokenUsageQuota(req, res, next) {
   next();
 }
 
-// Read-only mode middleware (blocks write operations)
+// Read-only mode middleware (blocks write operations) - DEPRECATED, use ENDPOINT_MODE
 function requireWriteAccess(req, res, next) {
-  if (READ_ONLY_MODE) {
+  if (READ_ONLY_MODE || ENDPOINT_MODE === 'audit-only') {
     return res.status(403).json({
       error: 'Forbidden',
-      message: 'Collector is in READ_ONLY_MODE - modification endpoints are disabled'
+      message: `Collector is in ${ENDPOINT_MODE} mode - modification endpoints are disabled`
+    });
+  }
+  next();
+}
+
+// Endpoint mode middleware - blocks audit endpoints in 'no-audit' mode
+function requireAuditAccess(req, res, next) {
+  if (ENDPOINT_MODE === 'no-audit') {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Collector is in no-audit mode - audit endpoints are disabled'
     });
   }
   next();
@@ -1219,7 +1237,7 @@ app.post('/api/users/get-activity', authenticate, async (req, res) => {
 });
 
 // AD Comprehensive Audit
-app.post('/api/audit', authenticate, checkTokenUsageQuota, async (req, res) => {
+app.post('/api/audit', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
   try {
     const { includeDetails, includeComputers } = req.body;
     const auditStart = Date.now();
@@ -3016,7 +3034,7 @@ app.post('/api/audit', authenticate, checkTokenUsageQuota, async (req, res) => {
 });
 
 // ========== AUDIT WITH STREAMING (SSE) ==========
-app.post('/api/audit/stream', authenticate, checkTokenUsageQuota, async (req, res) => {
+app.post('/api/audit/stream', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
   try {
     const { includeDetails, includeComputers } = req.body;
     const auditStart = Date.now();
@@ -4791,7 +4809,7 @@ app.post('/api/audit/stream', authenticate, checkTokenUsageQuota, async (req, re
 });
 
 // Get last audit result (cached, no re-run)
-app.get('/api/audit/last', authenticate, (req, res) => {
+app.get('/api/audit/last', authenticate, requireAuditAccess, (req, res) => {
   try {
     // Check if cache exists and is not expired
     if (!lastAuditCache.result) {

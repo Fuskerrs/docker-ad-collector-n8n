@@ -645,6 +645,23 @@ get_user_input() {
     read -p "   Max uses per token (3-100, or 'unlimited') [10]: " input
     TOKEN_MAX_USES=${input:-10}
     echo ""
+
+    # Endpoint mode (v2.4.0)
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🎯 Endpoint Access Mode${NC}"
+    echo -e "${CYAN}   Control which endpoints are enabled:${NC}"
+    echo -e "${CYAN}   1) ${GREEN}full${CYAN}       - All endpoints (audit + modifications)${NC}"
+    echo -e "${CYAN}   2) ${GREEN}audit-only${CYAN} - Only audit endpoints (read-only, no modifications)${NC}"
+    echo -e "${CYAN}   3) ${GREEN}no-audit${CYAN}   - All endpoints except audit${NC}"
+    echo ""
+    read -p "   Endpoint mode (1-3) [1]: " input
+    case ${input:-1} in
+        1) ENDPOINT_MODE="full" ;;
+        2) ENDPOINT_MODE="audit-only" ;;
+        3) ENDPOINT_MODE="no-audit" ;;
+        *) ENDPOINT_MODE="full" ;;
+    esac
+    echo ""
 }
 
 show_configuration_summary() {
@@ -662,8 +679,9 @@ show_configuration_summary() {
     echo -e "  TLS Verify:    $LDAP_TLS_VERIFY"
     echo ""
     echo -e "${BOLD}Security Settings:${NC}"
-    echo -e "  Token Expiry:  $TOKEN_EXPIRY"
+    echo -e "  Token Expiry:   $TOKEN_EXPIRY"
     echo -e "  Token Max Uses: $TOKEN_MAX_USES"
+    echo -e "  Endpoint Mode:  $ENDPOINT_MODE"
     echo ""
 
     read -p "Proceed with installation? (y/n): " -n 1 -r
@@ -822,10 +840,15 @@ SHOW_TOKEN=true
 # RATE_LIMIT_MAX_REQUESTS=100
 
 # ============================================================================
-# Access Control (v2.3.0 Security Enhancement)
+# Access Control (v2.4.0 Security Enhancement)
 # ============================================================================
-# Read-only mode - disables all modification endpoints (default: false)
-# When enabled: only queries allowed, no create/modify/delete operations
+# Endpoint access mode (default: full)
+# - full: All endpoints enabled (audit + modifications)
+# - audit-only: Only audit endpoints (no modifications)
+# - no-audit: All endpoints except audit
+ENDPOINT_MODE=$ENDPOINT_MODE
+
+# Read-only mode (DEPRECATED - use ENDPOINT_MODE=audit-only instead)
 # READ_ONLY_MODE=false
 
 # ============================================================================
