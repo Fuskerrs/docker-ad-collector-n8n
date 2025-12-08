@@ -726,6 +726,8 @@ services:
     environment:
       # Show token on first installation (you can remove this after getting the token)
       - SHOW_TOKEN=true
+      # Bind to all interfaces inside container (required for Docker port mapping)
+      - BIND_ADDRESS=0.0.0.0
     volumes:
       - ./certs:/app/certs:ro
     healthcheck:
