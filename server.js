@@ -5514,6 +5514,111 @@ app.post('/api/audit/stream', authenticate, requireAuditAccess, checkTokenUsageQ
   }
 });
 
+// ============================================================================
+// AUDIT EXPORT ENDPOINT (v2.6.1)
+// ============================================================================
+// Export audit results as downloadable JSON file with optional filename
+// Useful for local network exports without exposing collector publicly
+// Supports all /api/audit features: includeDetails, includeComputers
+app.post('/api/audit/export', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
+  try {
+    const { includeDetails, includeComputers, filename, pretty } = req.body;
+
+    console.log(`[EXPORT] Starting audit export - includeDetails: ${includeDetails}, includeComputers: ${includeComputers}, filename: ${filename || 'auto'}`);
+
+    // Make internal request to /api/audit to get full audit data
+    // This ensures we use the exact same logic without code duplication
+    const http = require('http');
+    const postData = JSON.stringify({ includeDetails, includeComputers });
+
+    const options = {
+      hostname: 'localhost',
+      port: config.port,
+      path: '/api/audit',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'Authorization': req.headers.authorization // Forward auth token
+      }
+    };
+
+    const auditReq = http.request(options, (auditRes) => {
+      let data = '';
+
+      auditRes.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      auditRes.on('end', () => {
+        try {
+          const auditResult = JSON.parse(data);
+
+          if (!auditResult.success) {
+            return res.status(500).json(auditResult);
+          }
+
+          // Set download headers
+          const exportFilename = filename || `audit-${new Date().toISOString().split('T')[0]}.json`;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename="${exportFilename}"`);
+
+          // Add custom headers with audit metadata
+          if (auditResult.audit && auditResult.audit.summary) {
+            const summary = auditResult.audit.summary;
+            const vulns = summary.vulnerabilities || {};
+
+            res.setHeader('X-Audit-Duration', auditResult.audit.metadata.duration);
+            res.setHeader('X-Audit-Users', summary.users || 0);
+            res.setHeader('X-Audit-Groups', summary.groups || 0);
+            res.setHeader('X-Audit-Computers', summary.computers || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Total', vulns.total || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Critical', vulns.critical || 0);
+            res.setHeader('X-Audit-Vulnerabilities-High', vulns.high || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Medium', vulns.medium || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Low', vulns.low || 0);
+            res.setHeader('X-Audit-Security-Score', vulns.score || 0);
+          }
+
+          // Send as downloadable JSON (pretty-print if requested)
+          const output = pretty ? JSON.stringify(auditResult, null, 2) : JSON.stringify(auditResult);
+          res.send(output);
+
+          console.log(`[EXPORT] Audit export completed successfully - ${exportFilename}`);
+
+        } catch (parseError) {
+          console.error('[EXPORT] Failed to parse audit response:', parseError);
+          res.status(500).json({
+            success: false,
+            error: 'Failed to parse audit response',
+            details: parseError.message
+          });
+        }
+      });
+    });
+
+    auditReq.on('error', (error) => {
+      console.error('[EXPORT] Internal audit request failed:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal audit request failed',
+        details: error.message
+      });
+    });
+
+    auditReq.write(postData);
+    auditReq.end();
+
+  } catch (error) {
+    console.error('[EXPORT] Error during audit export:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Get last audit result (cached, no re-run)
 app.get('/api/audit/last', authenticate, requireAuditAccess, (req, res) => {
   try {

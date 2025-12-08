@@ -1,10 +1,10 @@
 # AD Collector API Guide
 
-## Version: 2.1.1
+## Version: 2.6.0
 
 This guide describes all available API endpoints in the Docker AD Collector for n8n.
 
-**Version 2.1.1:** Granular SSE logging with 70 audit steps for improved visibility and per-vulnerability feedback.
+**Version 2.6.0:** Local audit export feature for air-gapped environments + 87 vulnerability detections (16 new computer-specific checks)
 
 ---
 
@@ -12,17 +12,49 @@ This guide describes all available API endpoints in the Docker AD Collector for 
 
 ### Environment Variables
 
+#### LDAP Configuration
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LDAP_URL` | AD server URL | `ldaps://localhost:636` |
 | `LDAP_BASE_DN` | Base DN for searches | `DC=example,DC=com` |
 | `LDAP_BIND_DN` | Service account DN | `CN=admin,CN=Users,DC=example,DC=com` |
 | `LDAP_BIND_PASSWORD` | Account password | `password` |
-| `LDAP_TLS_VERIFY` | Verify TLS certificate | `false` |
+| `LDAP_TLS_VERIFY` | Verify TLS certificate | `true` |
+| `LDAP_SKIP_CERT_HOSTNAME_CHECK` | Skip cert hostname check (for IP-based) | `false` |
+| `LDAP_TIMEOUT` | LDAP query timeout (ms) | `10000` |
+| `LDAP_CONNECT_TIMEOUT` | Connection timeout (ms) | `5000` |
+
+#### Network & Binding
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `PORT` | Listening port | `8443` |
+| `BIND_ADDRESS` | Binding address (127.0.0.1 or 0.0.0.0) | `127.0.0.1` |
+
+#### JWT Authentication (v2.4.0+)
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `API_TOKEN` | Custom JWT token | Auto-generated |
-| `TOKEN_EXPIRY` | Token validity duration | `365d` |
-| `MAX_PWD_AGE_DAYS` | Max password age | `90` |
+| `TOKEN_EXPIRY` | Token validity duration | `7d` |
+| `TOKEN_MAX_USES` | Max uses per token (anti-theft) | `10` |
+| `SHOW_TOKEN` | Show token in logs | `false` |
+
+#### Access Control (v2.4.0+)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENDPOINT_MODE` | Endpoint access mode (full/audit-only/no-audit) | `full` |
+| `READ_ONLY_MODE` | (Deprecated) Read-only mode | `false` |
+
+#### Rate Limiting (v2.3.0+)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` |
+| `RATE_LIMIT_WINDOW_MS` | Rate limit window (ms) | `60000` |
+| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | `100` |
+
+#### Audit Configuration
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_PWD_AGE_DAYS` | Max password age for alerts | `90` |
 
 ---
 
@@ -91,6 +123,115 @@ curl -X POST http://localhost:8443/api/test-connection \
   "connected": true
 }
 ```
+
+---
+
+## Local Audit Export (v2.6.0)
+
+### 📤 Standalone Export Script
+
+**NEW in v2.6.0:** Export complete AD security audits to JSON without exposing the API publicly.
+
+#### Usage
+
+```bash
+# Basic export
+docker exec ad-collector node export-audit.js
+
+# Detailed export with all options
+docker exec ad-collector node export-audit.js \
+  --output /tmp/audit.json \
+  --include-details \
+  --include-computers \
+  --pretty
+
+# Copy to host
+docker cp ad-collector:/tmp/audit.json ./audit.json
+```
+
+#### Command-Line Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--output <file>` | Output file path | `audit-YYYY-MM-DD-HHmmss.json` |
+| `--include-details` | Include full vulnerability details | `false` (summary only) |
+| `--include-computers` | Include computer account analysis | `false` |
+| `--pretty` | Pretty-print JSON output | `false` (minified) |
+| `--help` | Show help message | - |
+
+#### Output Format
+
+**Summary Mode (default):**
+```json
+{
+  "success": true,
+  "audit": {
+    "metadata": {
+      "timestamp": "2025-12-08T12:34:56.789Z",
+      "duration": "45.23s",
+      "includeDetails": false,
+      "includeComputers": false,
+      "exportedBy": "export-audit.js",
+      "version": "2.6.0"
+    },
+    "summary": {
+      "users": 1234,
+      "groups": 156,
+      "computers": 0,
+      "vulnerabilities": {
+        "critical": 5,
+        "high": 12,
+        "medium": 23,
+        "low": 8,
+        "total": 48,
+        "score": 72
+      }
+    },
+    "findings": {
+      "critical": 5,
+      "high": 12,
+      "medium": 23,
+      "low": 8
+    }
+  }
+}
+```
+
+**Detailed Mode (`--include-details`):**
+```json
+{
+  "success": true,
+  "audit": {
+    "metadata": { ... },
+    "progress": [...],
+    "summary": { ... },
+    "findings": {
+      "critical": [
+        {
+          "type": "PASSWORD_NOT_REQUIRED",
+          "samAccountName": "testuser",
+          "dn": "CN=testuser,CN=Users,DC=example,DC=com",
+          "message": "Account does not require a password"
+        }
+      ],
+      "high": [...],
+      "medium": [...],
+      "low": [...]
+    }
+  }
+}
+```
+
+#### Use Cases
+
+- ✅ **Enterprise Security Requirements** - No public API exposure needed
+- ✅ **Air-Gapped Environments** - Works in isolated networks
+- ✅ **Offline Analysis** - Export for external security teams
+- ✅ **Compliance Documentation** - Generate audit reports for regulatory compliance
+
+#### Complete Documentation
+
+For comprehensive guide, workflows, and automation examples, see **[EXPORT.md](EXPORT.md)**.
 
 ---
 
@@ -1244,6 +1385,160 @@ function useAuditSSE(includeDetails = false, includeComputers = false) {
 - List completed steps with their durations
 - Display intermediate counts (users found, issues detected)
 - Animate step completions for better visual feedback
+
+---
+
+### POST /api/audit/export
+
+**NEW in v2.6.1** - Export audit results as a downloadable JSON file with optional filename.
+
+**Why use this endpoint?**
+- ✅ **Local Network Export** - Call from another server on local network (no public exposure)
+- ✅ **Downloadable File** - Returns audit as attachment with `Content-Disposition` header
+- ✅ **Custom Filename** - Specify your own filename
+- ✅ **Pretty Print** - Optional human-readable JSON formatting
+- ✅ **Full Audit** - Same complete audit as `/api/audit` (all 87 vulnerability detections)
+- ✅ **Metadata Headers** - Audit summary in HTTP headers for quick parsing
+
+**Body:**
+```json
+{
+  "includeDetails": true,
+  "includeComputers": true,
+  "filename": "my-audit-2025-12-08.json",
+  "pretty": true
+}
+```
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `includeDetails` | boolean | No | Include full vulnerability details (default: false) |
+| `includeComputers` | boolean | No | Include computer account analysis (default: false) |
+| `filename` | string | No | Custom filename (default: `audit-YYYY-MM-DD.json`) |
+| `pretty` | boolean | No | Pretty-print JSON output (default: false) |
+
+**Example Request:**
+```bash
+# Basic export (summary only)
+curl -X POST http://localhost:8443/api/audit/export \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  -o audit.json
+
+# Detailed export with custom filename
+curl -X POST http://localhost:8443/api/audit/export \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "includeDetails": true,
+    "includeComputers": true,
+    "filename": "security-audit-december-2025.json",
+    "pretty": true
+  }' \
+  -o security-audit.json
+
+# From another local server
+curl -X POST http://ad-collector.local:8443/api/audit/export \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"includeDetails": true, "includeComputers": true}' \
+  -o /var/audits/audit-$(date +%Y-%m-%d).json
+```
+
+**Response Headers:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Disposition: attachment; filename="audit-2025-12-08.json"
+X-Audit-Duration: 45.23s
+X-Audit-Users: 1234
+X-Audit-Groups: 156
+X-Audit-Computers: 89
+X-Audit-Vulnerabilities-Total: 48
+X-Audit-Vulnerabilities-Critical: 5
+X-Audit-Vulnerabilities-High: 12
+X-Audit-Vulnerabilities-Medium: 23
+X-Audit-Vulnerabilities-Low: 8
+X-Audit-Security-Score: 72
+```
+
+**Response Body:**
+```json
+{
+  "success": true,
+  "audit": {
+    "metadata": {
+      "timestamp": "2025-12-08T12:34:56.789Z",
+      "duration": "45.23s",
+      "includeDetails": true,
+      "includeComputers": true,
+      "version": "2.6.1"
+    },
+    "summary": {
+      "users": 1234,
+      "groups": 156,
+      "computers": 89,
+      "vulnerabilities": {
+        "critical": 5,
+        "high": 12,
+        "medium": 23,
+        "low": 8,
+        "total": 48,
+        "score": 72
+      }
+    },
+    "findings": {
+      "critical": [...],
+      "high": [...],
+      "medium": [...],
+      "low": [...]
+    }
+  }
+}
+```
+
+**Use Cases:**
+
+1. **Local Network Export Without Public Exposure**
+   ```bash
+   # From another server on same network
+   curl -X POST http://10.10.0.21:8443/api/audit/export \
+     -H "Authorization: Bearer TOKEN" \
+     -d '{"includeDetails": true}' \
+     -o /shared/audit.json
+   ```
+
+2. **Automated Scheduled Exports**
+   ```bash
+   #!/bin/bash
+   # /etc/cron.daily/ad-audit-export
+
+   DATE=$(date +%Y-%m-%d)
+   curl -X POST http://ad-collector:8443/api/audit/export \
+     -H "Authorization: Bearer $TOKEN" \
+     -d '{"includeDetails": true, "includeComputers": true, "pretty": true}' \
+     -o /var/audits/audit-${DATE}.json
+   ```
+
+3. **Parse Metadata from Headers**
+   ```bash
+   # Get security score without downloading full audit
+   SCORE=$(curl -sI -X POST http://localhost:8443/api/audit/export \
+     -H "Authorization: Bearer TOKEN" \
+     -d '{}' | grep -i "X-Audit-Security-Score" | cut -d' ' -f2)
+
+   echo "Security Score: $SCORE/100"
+   ```
+
+**Comparison: Export Methods**
+
+| Method | Network | Use Case |
+|--------|---------|----------|
+| `export-audit.js` | None (local only) | Air-gapped environments, no API exposure |
+| `/api/audit/export` | Local network | Internal server-to-server transfers |
+| `/api/audit` | Any (requires auth) | n8n workflows, external integrations |
 
 ---
 

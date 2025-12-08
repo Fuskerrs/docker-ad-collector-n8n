@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.6.0",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.6.0: Local export feature for air-gapped environments",
+  "version": "2.6.1",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.6.1: API export endpoint for local network transfers",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
