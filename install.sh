@@ -1184,25 +1184,69 @@ reset_token() {
         exit 1
     fi
 
-    # Ask for new TOKEN_MAX_USES
-    echo ""
+    # Read current configuration
     CURRENT_MAX_USES=$(grep "^TOKEN_MAX_USES=" .env 2>/dev/null | cut -d'=' -f2)
     CURRENT_MAX_USES=${CURRENT_MAX_USES:-10}
-    echo -e "${YELLOW}Current token max uses: ${CYAN}$CURRENT_MAX_USES${NC}"
-    read -p "New max uses per token (3-100, or 'unlimited') [$CURRENT_MAX_USES]: " input
+    CURRENT_ENDPOINT_MODE=$(grep "^ENDPOINT_MODE=" .env 2>/dev/null | cut -d'=' -f2)
+    CURRENT_ENDPOINT_MODE=${CURRENT_ENDPOINT_MODE:-full}
+
+    # Ask for new TOKEN_MAX_USES
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔒 Token Usage Quota${NC}"
+    echo -e "${CYAN}   Current: ${GREEN}$CURRENT_MAX_USES${NC}"
+    echo ""
+    read -p "   New max uses per token (3-100, or 'unlimited') [$CURRENT_MAX_USES]: " input
     NEW_MAX_USES=${input:-$CURRENT_MAX_USES}
+    echo ""
+
+    # Endpoint mode selection
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🎯 Endpoint Access Mode${NC}"
+    echo -e "${CYAN}   Current: ${GREEN}$CURRENT_ENDPOINT_MODE${NC}"
+    echo ""
+    echo -e "${CYAN}   1) ${GREEN}full${CYAN}       - All endpoints (audit + modifications)${NC}"
+    echo -e "${CYAN}   2) ${GREEN}audit-only${CYAN} - Only audit endpoints (read-only, no modifications)${NC}"
+    echo -e "${CYAN}   3) ${GREEN}no-audit${CYAN}   - All endpoints except audit${NC}"
+    echo ""
+
+    # Convert current mode to number for default
+    case $CURRENT_ENDPOINT_MODE in
+        full) DEFAULT_MODE=1 ;;
+        audit-only) DEFAULT_MODE=2 ;;
+        no-audit) DEFAULT_MODE=3 ;;
+        *) DEFAULT_MODE=1 ;;
+    esac
+
+    read -p "   Endpoint mode (1-3) [$DEFAULT_MODE]: " input
+    case ${input:-$DEFAULT_MODE} in
+        1) NEW_ENDPOINT_MODE="full" ;;
+        2) NEW_ENDPOINT_MODE="audit-only" ;;
+        3) NEW_ENDPOINT_MODE="no-audit" ;;
+        *) NEW_ENDPOINT_MODE="$CURRENT_ENDPOINT_MODE" ;;
+    esac
     echo ""
 
     print_step "Preparing token reset..."
 
-    # Update TOKEN_MAX_USES in .env
+    # Update .env file with new values
     if [ -f ".env" ]; then
+        # Update TOKEN_MAX_USES
         if grep -q "^TOKEN_MAX_USES=" .env; then
             sed -i "s/^TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
         elif grep -q "^# TOKEN_MAX_USES=" .env; then
             sed -i "s/^# TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
         else
             echo "TOKEN_MAX_USES=$NEW_MAX_USES" >> .env
+        fi
+
+        # Update ENDPOINT_MODE
+        if grep -q "^ENDPOINT_MODE=" .env; then
+            sed -i "s/^ENDPOINT_MODE=.*/ENDPOINT_MODE=$NEW_ENDPOINT_MODE/" .env
+        elif grep -q "^# ENDPOINT_MODE=" .env; then
+            sed -i "s/^# ENDPOINT_MODE=.*/ENDPOINT_MODE=$NEW_ENDPOINT_MODE/" .env
+        else
+            echo "ENDPOINT_MODE=$NEW_ENDPOINT_MODE" >> .env
         fi
     fi
 
@@ -1248,8 +1292,9 @@ reset_token() {
         echo ""
         echo -e "${GREEN}$NEW_TOKEN${NC}"
         echo ""
-        echo -e "${CYAN}Token settings:${NC}"
-        echo -e "  Max uses: ${BOLD}$NEW_MAX_USES${NC}"
+        echo -e "${CYAN}Updated configuration:${NC}"
+        echo -e "  Token Max Uses: ${GREEN}$NEW_MAX_USES${NC}"
+        echo -e "  Endpoint Mode:  ${GREEN}$NEW_ENDPOINT_MODE${NC}"
         echo ""
         echo -e "${YELLOW}⚠️  Token will not be shown in logs (SHOW_TOKEN disabled)${NC}"
         echo -e "${YELLOW}   Save it now - you can regenerate with: ./install.sh --reset-token${NC}"
@@ -1367,10 +1412,75 @@ update() {
     cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
     print_success "Configuration backed up"
 
+    # Read current configuration
+    CURRENT_MAX_USES=$(grep "^TOKEN_MAX_USES=" .env 2>/dev/null | cut -d'=' -f2)
+    CURRENT_MAX_USES=${CURRENT_MAX_USES:-10}
+    CURRENT_ENDPOINT_MODE=$(grep "^ENDPOINT_MODE=" .env 2>/dev/null | cut -d'=' -f2)
+    CURRENT_ENDPOINT_MODE=${CURRENT_ENDPOINT_MODE:-full}
+
+    # Ask for configuration updates
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔒 Token Usage Quota${NC}"
+    echo -e "${CYAN}   Current: ${GREEN}$CURRENT_MAX_USES${NC}"
+    echo ""
+    read -p "   New max uses per token (3-100, or 'unlimited') [$CURRENT_MAX_USES]: " input
+    NEW_MAX_USES=${input:-$CURRENT_MAX_USES}
+    echo ""
+
+    # Endpoint mode selection
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🎯 Endpoint Access Mode${NC}"
+    echo -e "${CYAN}   Current: ${GREEN}$CURRENT_ENDPOINT_MODE${NC}"
+    echo ""
+    echo -e "${CYAN}   1) ${GREEN}full${CYAN}       - All endpoints (audit + modifications)${NC}"
+    echo -e "${CYAN}   2) ${GREEN}audit-only${CYAN} - Only audit endpoints (read-only, no modifications)${NC}"
+    echo -e "${CYAN}   3) ${GREEN}no-audit${CYAN}   - All endpoints except audit${NC}"
+    echo ""
+
+    # Convert current mode to number for default
+    case $CURRENT_ENDPOINT_MODE in
+        full) DEFAULT_MODE=1 ;;
+        audit-only) DEFAULT_MODE=2 ;;
+        no-audit) DEFAULT_MODE=3 ;;
+        *) DEFAULT_MODE=1 ;;
+    esac
+
+    read -p "   Endpoint mode (1-3) [$DEFAULT_MODE]: " input
+    case ${input:-$DEFAULT_MODE} in
+        1) NEW_ENDPOINT_MODE="full" ;;
+        2) NEW_ENDPOINT_MODE="audit-only" ;;
+        3) NEW_ENDPOINT_MODE="no-audit" ;;
+        *) NEW_ENDPOINT_MODE="$CURRENT_ENDPOINT_MODE" ;;
+    esac
+    echo ""
+
+    # Update .env file with new values
+    if [ -f ".env" ]; then
+        # Update TOKEN_MAX_USES
+        if grep -q "^TOKEN_MAX_USES=" .env; then
+            sed -i "s/^TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
+        elif grep -q "^# TOKEN_MAX_USES=" .env; then
+            sed -i "s/^# TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
+        else
+            echo "TOKEN_MAX_USES=$NEW_MAX_USES" >> .env
+        fi
+
+        # Update ENDPOINT_MODE
+        if grep -q "^ENDPOINT_MODE=" .env; then
+            sed -i "s/^ENDPOINT_MODE=.*/ENDPOINT_MODE=$NEW_ENDPOINT_MODE/" .env
+        elif grep -q "^# ENDPOINT_MODE=" .env; then
+            sed -i "s/^# ENDPOINT_MODE=.*/ENDPOINT_MODE=$NEW_ENDPOINT_MODE/" .env
+        else
+            echo "ENDPOINT_MODE=$NEW_ENDPOINT_MODE" >> .env
+        fi
+    fi
+
     print_step "Pulling latest Docker image..."
     $DOCKER_COMPOSE_CMD pull
 
-    print_step "Restarting with new image..."
+    print_step "Restarting with new image and configuration..."
+    $DOCKER_COMPOSE_CMD down
     $DOCKER_COMPOSE_CMD up -d
 
     print_step "Waiting for container to be ready..."
@@ -1380,11 +1490,17 @@ update() {
     if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
         print_success "Update completed successfully"
 
-        # Show new version
+        # Show new version and configuration
         NEW_VERSION=$(curl -s http://localhost:8443/health 2>/dev/null | grep -oP '"version":"[^"]+' | cut -d'"' -f4)
         if [ -n "$NEW_VERSION" ]; then
             print_info "Current version: $NEW_VERSION"
         fi
+
+        echo ""
+        echo -e "${CYAN}Updated configuration:${NC}"
+        echo -e "  Token Max Uses: ${GREEN}$NEW_MAX_USES${NC}"
+        echo -e "  Endpoint Mode:  ${GREEN}$NEW_ENDPOINT_MODE${NC}"
+        echo ""
     else
         print_error "Update failed - container not running"
         print_info "Check logs: $DOCKER_COMPOSE_CMD logs"
