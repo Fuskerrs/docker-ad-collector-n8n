@@ -2,22 +2,31 @@ FROM node:18-alpine
 
 # Metadata
 LABEL maintainer="AD Collector for n8n"
-LABEL version="1.0.0"
+LABEL version="2.3.0"
 LABEL description="Active Directory Collector API for n8n-nodes-ad-admin"
+
+# Security: Run as non-root user
+RUN addgroup -g 1000 adcollector && \
+    adduser -D -u 1000 -G adcollector adcollector
 
 # Set working directory
 WORKDIR /app
 
 # Install dependencies first (better caching)
 COPY package.json ./
-RUN npm install --production
+RUN npm install --production && \
+    npm cache clean --force
 
 # Copy application files
 COPY server.js ./
 COPY entrypoint.sh ./
 
-# Make entrypoint executable
-RUN chmod +x entrypoint.sh
+# Make entrypoint executable and set permissions
+RUN chmod +x entrypoint.sh && \
+    chown -R adcollector:adcollector /app
+
+# Switch to non-root user
+USER adcollector
 
 # Expose port
 EXPOSE 8443

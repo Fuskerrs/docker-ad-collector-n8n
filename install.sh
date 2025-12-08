@@ -458,10 +458,13 @@ show_prerequisites() {
     echo -e "   ${CYAN}The script will fetch the Root CA certificate using your service account${NC}"
     echo -e "   ${CYAN}No manual export needed!${NC}"
     echo ""
-    echo -e "${YELLOW}⚙️  Optional Settings:${NC}"
+    echo -e "${YELLOW}⚙️  Optional Settings (v2.3.0 Security Enhancements):${NC}"
     echo -e "   • Installation directory (default: ~/ad-collector)"
     echo -e "   • Collector port (default: 8443)"
-    echo -e "   • Token expiry duration (default: 365d)"
+    echo -e "   • Token expiry duration (default: 1h) ${CYAN}[Changed from 365d]${NC}"
+    echo -e "   • Binding address (default: 127.0.0.1) ${CYAN}[New: localhost only]${NC}"
+    echo -e "   • Rate limiting (default: enabled, 100 req/min) ${CYAN}[New]${NC}"
+    echo -e "   • Read-only mode (default: disabled) ${CYAN}[New]${NC}"
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -494,13 +497,16 @@ get_user_input() {
         echo -e "      container_name: ad-collector"
         echo -e "      restart: unless-stopped"
         echo -e "      ports:"
-        echo -e "        - \"8443:8443\""
+        echo -e "        - \"127.0.0.1:8443:8443\"  # Bind to localhost only"
         echo -e "      environment:"
         echo -e "        - LDAP_URL=ldaps://dc.example.com:636"
         echo -e "        - LDAP_BASE_DN=DC=example,DC=com"
         echo -e "        - LDAP_BIND_DN=CN=service,CN=Users,DC=example,DC=com"
         echo -e "        - LDAP_BIND_PASSWORD=YourPassword"
-        echo -e "        - LDAP_TLS_VERIFY=false"
+        echo -e "        - LDAP_TLS_VERIFY=false  # Set to true for production"
+        echo -e "        - TOKEN_EXPIRY=1h  # Default in v2.3.0"
+        echo -e "        # - BIND_ADDRESS=0.0.0.0  # Uncomment to expose on all interfaces"
+        echo -e "        # - READ_ONLY_MODE=true  # Uncomment for read-only deployment"
         echo -e "  EOF"
         echo ""
         echo -e "${YELLOW}# 3. Start the collector${NC}"
@@ -626,8 +632,8 @@ get_user_input() {
     echo ""
 
     # Token expiry
-    read -p "   Token expiry (e.g., 365d, 1y) [365d]: " input
-    TOKEN_EXPIRY=${input:-365d}
+    read -p "   Token expiry (e.g., 1h, 24h, 7d) [1h]: " input
+    TOKEN_EXPIRY=${input:-1h}
     echo ""
 }
 
@@ -729,18 +735,86 @@ EOF
     # Create .env
     print_step "Creating .env configuration..."
     cat > .env <<EOF
+# ============================================================================
+# AD Collector Configuration v2.3.0
+# ============================================================================
+
+# ============================================================================
 # Active Directory Configuration
+# ============================================================================
 LDAP_URL=$LDAP_URL
 LDAP_BASE_DN=$LDAP_BASE_DN
 LDAP_BIND_DN=$LDAP_BIND_DN
 LDAP_BIND_PASSWORD=$LDAP_BIND_PASSWORD
 
-# Security Settings
+# ============================================================================
+# TLS/Security Settings
+# ============================================================================
+# TLS certificate verification (default: true for security)
 LDAP_TLS_VERIFY=$LDAP_TLS_VERIFY
 
-# Optional Settings
+# Skip certificate hostname verification (default: false)
+# LDAP_SKIP_CERT_HOSTNAME_CHECK=false
+
+# LDAP connection timeouts (milliseconds)
+# LDAP_TIMEOUT=10000
+# LDAP_CONNECT_TIMEOUT=5000
+
+# ============================================================================
+# Network & Binding (v2.3.0 Security Enhancement)
+# ============================================================================
+# Binding address (default: 127.0.0.1 for localhost only)
+# Set to 0.0.0.0 to expose on all interfaces (requires proper firewall)
+# BIND_ADDRESS=127.0.0.1
+
+# Port for the collector service
 PORT=8443
+
+# ============================================================================
+# JWT Authentication (v2.3.0 Security Enhancement)
+# ============================================================================
+# Token expiration time (default: 1h)
+# Examples: 1h, 24h, 7d, 30d
 TOKEN_EXPIRY=$TOKEN_EXPIRY
+
+# Show token in startup logs (default: false)
+# WARNING: Only set to 'true' in development/testing environments
+# SHOW_TOKEN=false
+
+# Provide your own API token (optional, auto-generated if not set)
+# API_TOKEN=your-secure-token-here
+
+# ============================================================================
+# Rate Limiting (v2.3.0 Security Enhancement)
+# ============================================================================
+# Enable rate limiting (default: true)
+# RATE_LIMIT_ENABLED=true
+
+# Rate limit window in milliseconds (default: 60000 = 1 minute)
+# RATE_LIMIT_WINDOW_MS=60000
+
+# Maximum requests per window (default: 100)
+# RATE_LIMIT_MAX_REQUESTS=100
+
+# ============================================================================
+# Access Control (v2.3.0 Security Enhancement)
+# ============================================================================
+# Read-only mode - disables all modification endpoints (default: false)
+# When enabled: only queries allowed, no create/modify/delete operations
+# READ_ONLY_MODE=false
+
+# ============================================================================
+# Notes:
+# ============================================================================
+# - Lines starting with # are comments
+# - Uncomment (remove #) to activate optional settings
+# - Changes require container restart: docker compose restart
+# - Security best practices:
+#   * Use BIND_ADDRESS=127.0.0.1 and reverse proxy with TLS
+#   * Keep TOKEN_EXPIRY short (1h-24h) for production
+#   * Enable LDAP_TLS_VERIFY=true for production
+#   * Consider READ_ONLY_MODE=true for monitoring-only deployments
+# ============================================================================
 EOF
 
     # Secure .env file

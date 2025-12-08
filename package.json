@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.1.4",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.1.4: CRITICAL FIX - domainRoot now declared before Phase 3 for proper Phase 4 execution",
+  "version": "2.3.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.3.0: Security hardening (TLS enforcement, rate limiting, JWT validation, non-root user)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -17,6 +17,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
     "ldapjs": "^3.0.5",
     "jsonwebtoken": "^9.0.2"
   },

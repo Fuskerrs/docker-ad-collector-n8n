@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const ldap = require('ldapjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -22,6 +23,8 @@ if (fs.existsSync(certPath)) {
 }
 
 // Configuration from environment variables
+const READ_ONLY_MODE = process.env.READ_ONLY_MODE === 'true';
+
 const config = {
   port: process.env.PORT || 8443,
   ldap: {
@@ -30,11 +33,17 @@ const config = {
     bindDN: process.env.LDAP_BIND_DN || 'CN=admin,CN=Users,DC=example,DC=com',
     bindPassword: process.env.LDAP_BIND_PASSWORD || 'password',
     tlsOptions: {
-      rejectUnauthorized: process.env.LDAP_TLS_VERIFY === 'true',
+      // Default to TRUE for security (set LDAP_TLS_VERIFY=false explicitly to disable)
+      rejectUnauthorized: process.env.LDAP_TLS_VERIFY !== 'false',
+      minVersion: 'TLSv1.2',  // Force TLS 1.2 minimum
       ...(caCert && { ca: [caCert] }),  // Add CA certificate if loaded
-      // Allow connecting by IP when certificate is issued for hostname
-      checkServerIdentity: function() { return undefined; }
-    }
+      // Only bypass checkServerIdentity if explicitly requested (for IP-based connections)
+      ...(process.env.LDAP_SKIP_CERT_HOSTNAME_CHECK === 'true' && {
+        checkServerIdentity: function() { return undefined; }
+      })
+    },
+    timeout: parseInt(process.env.LDAP_TIMEOUT || '10000'),  // 10s default
+    connectTimeout: parseInt(process.env.LDAP_CONNECT_TIMEOUT || '5000')  // 5s default
   }
 };
 
@@ -49,7 +58,11 @@ if (process.env.API_TOKEN) {
   API_TOKEN = jwt.sign(
     { service: 'ad-collector', created: Date.now() },
     JWT_SECRET,
-    { expiresIn: process.env.TOKEN_EXPIRY || '365d' }
+    {
+      expiresIn: process.env.TOKEN_EXPIRY || '1h',  // Changed default from 365d to 1h
+      algorithm: 'HS256',
+      issuer: 'ad-collector'
+    }
   );
 }
 
@@ -61,13 +74,38 @@ console.log(`  LDAP URL: ${config.ldap.url}`);
 console.log(`  Base DN: ${config.ldap.baseDN}`);
 console.log(`  Bind DN: ${config.ldap.bindDN}`);
 console.log(`  TLS Verify: ${config.ldap.tlsOptions.rejectUnauthorized}`);
+console.log(`  Bind Address: ${process.env.BIND_ADDRESS || '127.0.0.1'}`);
+console.log(`  Token Expiry: ${process.env.TOKEN_EXPIRY || '1h'}`);
 console.log('========================================');
-console.log('API Token:');
-console.log(API_TOKEN);
+if (process.env.API_TOKEN) {
+  console.log('✅ Using API Token from environment variable');
+} else {
+  console.log('⚠️  Generated new API Token (set API_TOKEN env var to persist)');
+  if (process.env.SHOW_TOKEN === 'true') {
+    console.log(`API Token: ${API_TOKEN}`);
+  } else {
+    console.log('   (Set SHOW_TOKEN=true to display token - NOT recommended in production)');
+  }
+}
 console.log('========================================\n');
 
 const app = express();
 app.use(express.json());
+
+// Rate limiting middleware (configurable via environment variables)
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1 minute default
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'), // 100 requests per window default
+  message: { error: 'Too many requests, please try again later' },
+  standardHeaders: true, // Return rate limit info in RateLimit-* headers
+  legacyHeaders: false, // Disable X-RateLimit-* headers
+  skip: (req) => process.env.RATE_LIMIT_ENABLED === 'false' // Allow disabling via env
+});
+
+// Apply rate limiting to all routes
+if (process.env.RATE_LIMIT_ENABLED !== 'false') {
+  app.use(limiter);
+}
 
 // In-memory cache for last audit result (avoid re-running audit on fallback)
 let lastAuditCache = {
@@ -84,10 +122,36 @@ function authenticate(req, res, next) {
   }
 
   const token = authHeader.split(' ')[1];
-  if (token !== API_TOKEN) {
-    return res.status(401).json({ error: 'Invalid token' });
+
+  // Simple token comparison for API_TOKEN from env
+  if (process.env.API_TOKEN && token === API_TOKEN) {
+    return next();
   }
 
+  // JWT validation for generated tokens
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256'],  // Force algorithm validation
+      issuer: 'ad-collector',  // Validate issuer
+      maxAge: process.env.TOKEN_EXPIRY || '1h'  // Validate expiration
+    });
+
+    // Attach decoded payload to request for future use
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token', details: err.message });
+  }
+}
+
+// Read-only mode middleware (blocks write operations)
+function requireWriteAccess(req, res, next) {
+  if (READ_ONLY_MODE) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Collector is in READ_ONLY_MODE - modification endpoints are disabled'
+    });
+  }
   next();
 }
 
@@ -497,7 +561,7 @@ app.post('/api/users/list', authenticate, async (req, res) => {
 });
 
 // Create user
-app.post('/api/users/create', authenticate, async (req, res) => {
+app.post('/api/users/create', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const client = await createLdapClient();
     const {
@@ -608,7 +672,7 @@ app.post('/api/users/create', authenticate, async (req, res) => {
 });
 
 // Enable user
-app.post('/api/users/enable', authenticate, async (req, res) => {
+app.post('/api/users/enable', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName } = req.body;
 
@@ -654,7 +718,7 @@ app.post('/api/users/enable', authenticate, async (req, res) => {
 });
 
 // Disable user
-app.post('/api/users/disable', authenticate, async (req, res) => {
+app.post('/api/users/disable', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName } = req.body;
 
@@ -700,7 +764,7 @@ app.post('/api/users/disable', authenticate, async (req, res) => {
 });
 
 // Reset password
-app.post('/api/users/reset-password', authenticate, async (req, res) => {
+app.post('/api/users/reset-password', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName, newPassword, forceChange } = req.body;
 
@@ -758,7 +822,7 @@ app.post('/api/users/reset-password', authenticate, async (req, res) => {
 });
 
 // Delete user
-app.post('/api/users/delete', authenticate, async (req, res) => {
+app.post('/api/users/delete', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName } = req.body;
 
@@ -791,7 +855,7 @@ app.post('/api/users/delete', authenticate, async (req, res) => {
 });
 
 // Unlock user account
-app.post('/api/users/unlock', authenticate, async (req, res) => {
+app.post('/api/users/unlock', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { samAccountName, dn } = req.body;
 
@@ -893,7 +957,7 @@ app.post('/api/users/check-password-expiry', authenticate, async (req, res) => {
 });
 
 // Set user attributes
-app.post('/api/users/set-attributes', authenticate, async (req, res) => {
+app.post('/api/users/set-attributes', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName, attributes } = req.body;
 
@@ -4652,7 +4716,7 @@ app.post('/api/groups/list', authenticate, async (req, res) => {
 });
 
 // Create group
-app.post('/api/groups/create', authenticate, async (req, res) => {
+app.post('/api/groups/create', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const client = await createLdapClient();
     const { samAccountName, name, ou, description, groupType } = req.body;
@@ -4690,7 +4754,7 @@ app.post('/api/groups/create', authenticate, async (req, res) => {
 });
 
 // Modify group
-app.post('/api/groups/modify', authenticate, async (req, res) => {
+app.post('/api/groups/modify', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName, attributes } = req.body;
 
@@ -4739,7 +4803,7 @@ app.post('/api/groups/modify', authenticate, async (req, res) => {
 });
 
 // Delete group
-app.post('/api/groups/delete', authenticate, async (req, res) => {
+app.post('/api/groups/delete', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, samAccountName } = req.body;
 
@@ -4773,7 +4837,7 @@ app.post('/api/groups/delete', authenticate, async (req, res) => {
 });
 
 // Add group member
-app.post('/api/groups/add-member', authenticate, async (req, res) => {
+app.post('/api/groups/add-member', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { userDn, groupDn, skipIfMember } = req.body;
 
@@ -4811,7 +4875,7 @@ app.post('/api/groups/add-member', authenticate, async (req, res) => {
 });
 
 // Remove group member
-app.post('/api/groups/remove-member', authenticate, async (req, res) => {
+app.post('/api/groups/remove-member', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { userDn, groupDn, skipIfNotMember } = req.body;
 
@@ -4906,7 +4970,7 @@ app.post('/api/ous/list', authenticate, async (req, res) => {
 });
 
 // Create OU
-app.post('/api/ous/create', authenticate, async (req, res) => {
+app.post('/api/ous/create', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const client = await createLdapClient();
     const { name, parentDn, description } = req.body;
@@ -4939,7 +5003,7 @@ app.post('/api/ous/create', authenticate, async (req, res) => {
 });
 
 // Modify OU
-app.post('/api/ous/modify', authenticate, async (req, res) => {
+app.post('/api/ous/modify', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn, attributes } = req.body;
 
@@ -4979,7 +5043,7 @@ app.post('/api/ous/modify', authenticate, async (req, res) => {
 });
 
 // Delete OU
-app.post('/api/ous/delete', authenticate, async (req, res) => {
+app.post('/api/ous/delete', authenticate, requireWriteAccess, async (req, res) => {
   try {
     const { dn } = req.body;
 
@@ -5025,9 +5089,14 @@ app.post('/api/ous/search', authenticate, async (req, res) => {
 
 // Start server
 const PORT = config.port;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ AD Collector listening on port ${PORT}`);
+const BIND_ADDRESS = process.env.BIND_ADDRESS || '127.0.0.1';
+
+app.listen(PORT, BIND_ADDRESS, () => {
+  console.log(`✅ AD Collector listening on ${BIND_ADDRESS}:${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`🧪 Test endpoint: POST http://localhost:${PORT}/api/test-connection`);
+  if (BIND_ADDRESS === '0.0.0.0') {
+    console.log('⚠️  WARNING: Listening on all interfaces (0.0.0.0) - ensure proper firewall rules!');
+  }
   console.log('');
 });
