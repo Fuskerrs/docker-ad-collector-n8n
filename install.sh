@@ -849,7 +849,9 @@ EOF
 
     # Create token-data directory for token file persistence
     mkdir -p ./token-data
-    chmod 700 ./token-data
+    chmod 755 ./token-data
+    # Set ownership to container user (UID 1001) so it can write the token file
+    chown 1001:1001 ./token-data
 
     print_success "Project created at $INSTALL_DIR"
 }
