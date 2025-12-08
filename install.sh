@@ -724,8 +724,6 @@ services:
     env_file:
       - .env
     environment:
-      # Show token on first installation (you can remove this after getting the token)
-      - SHOW_TOKEN=true
       # Bind to all interfaces inside container (required for Docker port mapping)
       - BIND_ADDRESS=0.0.0.0
     volumes:
@@ -761,7 +759,8 @@ LDAP_BIND_PASSWORD=$LDAP_BIND_PASSWORD
 LDAP_TLS_VERIFY=$LDAP_TLS_VERIFY
 
 # Skip certificate hostname verification (default: false)
-# LDAP_SKIP_CERT_HOSTNAME_CHECK=false
+# Set to 'true' when using IP address instead of hostname in LDAP_URL
+LDAP_SKIP_CERT_HOSTNAME_CHECK=true
 
 # LDAP connection timeouts (milliseconds)
 # LDAP_TIMEOUT=10000
@@ -792,7 +791,8 @@ TOKEN_EXPIRY=$TOKEN_EXPIRY
 
 # Show token in startup logs (default: false)
 # WARNING: Only set to 'true' in development/testing environments
-# SHOW_TOKEN=false
+# Temporarily enabled during installation for token retrieval
+SHOW_TOKEN=true
 
 # Provide your own API token (optional, auto-generated if not set)
 # API_TOKEN=your-secure-token-here
@@ -1447,8 +1447,13 @@ main() {
         rm -f "$INSTALL_DIR/token-data/ad-collector-token.txt"
         # Restrict directory permissions after token cleanup
         chmod 700 "$INSTALL_DIR/token-data" 2>/dev/null || true
+
+        # Disable SHOW_TOKEN in .env for security
+        cd "$INSTALL_DIR"
+        sed -i 's/^SHOW_TOKEN=true/# SHOW_TOKEN=false/' .env
+
         print_success "Token file deleted for security"
-        echo -e "${CYAN}You can still view the token in logs with: docker compose logs | grep 'API Token'${NC}"
+        print_info "SHOW_TOKEN disabled in .env - token will not appear in logs anymore"
         echo ""
     fi
 }
