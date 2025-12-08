@@ -55,13 +55,21 @@ let API_TOKEN;
 if (process.env.API_TOKEN) {
   API_TOKEN = process.env.API_TOKEN;
 } else {
+  // Generate unique JWT ID (jti) for usage tracking
+  const jti = crypto.randomBytes(16).toString('hex');
+
   API_TOKEN = jwt.sign(
-    { service: 'ad-collector', created: Date.now() },
+    {
+      service: 'ad-collector',
+      created: Date.now(),
+      jti: jti  // Unique token ID for usage tracking
+    },
     JWT_SECRET,
     {
       expiresIn: process.env.TOKEN_EXPIRY || '1h',  // Changed default from 365d to 1h
       algorithm: 'HS256',
-      issuer: 'ad-collector'
+      issuer: 'ad-collector',
+      jwtid: jti  // Standard JWT claim for token ID
     }
   );
 }
@@ -76,6 +84,8 @@ console.log(`  Bind DN: ${config.ldap.bindDN}`);
 console.log(`  TLS Verify: ${config.ldap.tlsOptions.rejectUnauthorized}`);
 console.log(`  Bind Address: ${process.env.BIND_ADDRESS || '127.0.0.1'}`);
 console.log(`  Token Expiry: ${process.env.TOKEN_EXPIRY || '1h'}`);
+console.log(`  Token Max Uses: ${TOKEN_MAX_USES === 0 || process.env.TOKEN_MAX_USES === 'unlimited' ? 'unlimited' : TOKEN_MAX_USES}`);
+console.log(`  Read-Only Mode: ${READ_ONLY_MODE}`);
 console.log('========================================');
 if (process.env.API_TOKEN) {
   console.log('✅ Using API Token from environment variable');
@@ -114,6 +124,76 @@ let lastAuditCache = {
   ttl: 5 * 60 * 1000 // 5 minutes TTL
 };
 
+// ============================================================================
+// Token Usage Tracking Store (v2.4.0 Security Enhancement)
+// ============================================================================
+const TOKEN_USAGE_STORE_PATH = process.env.TOKEN_USAGE_STORE_PATH || '/tmp/ad-collector-token-usage.json';
+const TOKEN_MAX_USES = parseInt(process.env.TOKEN_MAX_USES || '3'); // Default: 3 uses per token
+
+// In-memory store: { jti: { used_count, max_uses, exp, first_use, last_use } }
+let tokenUsageStore = {};
+
+// Load token usage store from disk (if exists)
+function loadTokenUsageStore() {
+  try {
+    if (fs.existsSync(TOKEN_USAGE_STORE_PATH)) {
+      const data = fs.readFileSync(TOKEN_USAGE_STORE_PATH, 'utf8');
+      tokenUsageStore = JSON.parse(data);
+      console.log(`✅ Loaded token usage store from ${TOKEN_USAGE_STORE_PATH}`);
+
+      // Clean up expired entries on load
+      const now = Date.now();
+      let cleaned = 0;
+      for (const jti in tokenUsageStore) {
+        if (tokenUsageStore[jti].exp && tokenUsageStore[jti].exp < now) {
+          delete tokenUsageStore[jti];
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        console.log(`   Cleaned ${cleaned} expired token entries`);
+        saveTokenUsageStore();
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️  Failed to load token usage store: ${err.message}`);
+    tokenUsageStore = {};
+  }
+}
+
+// Save token usage store to disk (async, non-blocking)
+function saveTokenUsageStore() {
+  try {
+    fs.writeFileSync(TOKEN_USAGE_STORE_PATH, JSON.stringify(tokenUsageStore, null, 2), 'utf8');
+  } catch (err) {
+    console.error(`❌ Failed to save token usage store: ${err.message}`);
+  }
+}
+
+// Clean up expired token entries (run periodically)
+function cleanupExpiredTokens() {
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const jti in tokenUsageStore) {
+    if (tokenUsageStore[jti].exp && tokenUsageStore[jti].exp < now) {
+      delete tokenUsageStore[jti];
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned up ${cleaned} expired token entries`);
+    saveTokenUsageStore();
+  }
+}
+
+// Load store on startup
+loadTokenUsageStore();
+
+// Schedule periodic cleanup (every 5 minutes)
+setInterval(cleanupExpiredTokens, 5 * 60 * 1000);
+
 // Authentication middleware
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -142,6 +222,72 @@ function authenticate(req, res, next) {
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token', details: err.message });
   }
+}
+
+// Token usage quota middleware (v2.4.0 Security Enhancement)
+// Controls how many times a token can be used before being exhausted
+function checkTokenUsageQuota(req, res, next) {
+  // Skip quota check if disabled
+  if (process.env.TOKEN_MAX_USES === '0' || process.env.TOKEN_MAX_USES === 'unlimited') {
+    return next();
+  }
+
+  // Skip if no user (shouldn't happen after authenticate, but safety check)
+  if (!req.user) {
+    return next();
+  }
+
+  // Extract jti from JWT payload
+  const jti = req.user.jti || req.user.jwtid;
+
+  // If no jti, it's an old token format or API_TOKEN - allow it
+  if (!jti) {
+    return next();
+  }
+
+  // Get or initialize token usage entry
+  let entry = tokenUsageStore[jti];
+
+  if (!entry) {
+    // First use of this token - initialize entry
+    entry = {
+      used_count: 0,
+      max_uses: TOKEN_MAX_USES,
+      exp: req.user.exp ? req.user.exp * 1000 : Date.now() + 3600000, // Convert exp to ms
+      first_use: Date.now(),
+      last_use: null
+    };
+    tokenUsageStore[jti] = entry;
+  }
+
+  // Check if token has reached its usage limit
+  if (entry.used_count >= entry.max_uses) {
+    return res.status(429).json({
+      error: 'Token usage limit reached',
+      message: `This token has been used ${entry.used_count} times (limit: ${entry.max_uses})`,
+      details: {
+        jti: jti,
+        used_count: entry.used_count,
+        max_uses: entry.max_uses,
+        first_use: new Date(entry.first_use).toISOString(),
+        last_use: entry.last_use ? new Date(entry.last_use).toISOString() : null
+      }
+    });
+  }
+
+  // Increment usage counter
+  entry.used_count++;
+  entry.last_use = Date.now();
+
+  // Save to disk (async, non-blocking)
+  saveTokenUsageStore();
+
+  // Add usage info to response headers
+  res.setHeader('X-Token-Usage', entry.used_count);
+  res.setHeader('X-Token-Max-Uses', entry.max_uses);
+  res.setHeader('X-Token-Remaining', entry.max_uses - entry.used_count);
+
+  next();
 }
 
 // Read-only mode middleware (blocks write operations)
@@ -1060,7 +1206,7 @@ app.post('/api/users/get-activity', authenticate, async (req, res) => {
 });
 
 // AD Comprehensive Audit
-app.post('/api/audit', authenticate, async (req, res) => {
+app.post('/api/audit', authenticate, checkTokenUsageQuota, async (req, res) => {
   try {
     const { includeDetails, includeComputers } = req.body;
     const auditStart = Date.now();
@@ -2857,7 +3003,7 @@ app.post('/api/audit', authenticate, async (req, res) => {
 });
 
 // ========== AUDIT WITH STREAMING (SSE) ==========
-app.post('/api/audit/stream', authenticate, async (req, res) => {
+app.post('/api/audit/stream', authenticate, checkTokenUsageQuota, async (req, res) => {
   try {
     const { includeDetails, includeComputers } = req.body;
     const auditStart = Date.now();

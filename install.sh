@@ -458,13 +458,14 @@ show_prerequisites() {
     echo -e "   ${CYAN}The script will fetch the Root CA certificate using your service account${NC}"
     echo -e "   ${CYAN}No manual export needed!${NC}"
     echo ""
-    echo -e "${YELLOW}⚙️  Optional Settings (v2.3.0 Security Enhancements):${NC}"
+    echo -e "${YELLOW}⚙️  Optional Settings (v2.3.0+ Security Enhancements):${NC}"
     echo -e "   • Installation directory (default: ~/ad-collector)"
     echo -e "   • Collector port (default: 8443)"
-    echo -e "   • Token expiry duration (default: 1h) ${CYAN}[Changed from 365d]${NC}"
-    echo -e "   • Binding address (default: 127.0.0.1) ${CYAN}[New: localhost only]${NC}"
-    echo -e "   • Rate limiting (default: enabled, 100 req/min) ${CYAN}[New]${NC}"
-    echo -e "   • Read-only mode (default: disabled) ${CYAN}[New]${NC}"
+    echo -e "   • Token expiry duration (default: 1h) ${CYAN}[v2.3.0: Changed from 365d]${NC}"
+    echo -e "   • Token usage quota (default: 3 uses) ${CYAN}[v2.4.0: Prevents stolen token abuse]${NC}"
+    echo -e "   • Binding address (default: 127.0.0.1) ${CYAN}[v2.3.0: localhost only]${NC}"
+    echo -e "   • Rate limiting (default: enabled, 100 req/min) ${CYAN}[v2.3.0]${NC}"
+    echo -e "   • Read-only mode (default: disabled) ${CYAN}[v2.3.0]${NC}"
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -777,6 +778,12 @@ PORT=8443
 # Examples: 1h, 24h, 7d, 30d
 TOKEN_EXPIRY=$TOKEN_EXPIRY
 
+# Token usage quota (v2.4.0 Security Enhancement)
+# Maximum number of times a token can be used before being exhausted
+# Default: 3 uses per token (prevents stolen token abuse)
+# Set to 'unlimited' or '0' to disable quota
+# TOKEN_MAX_USES=3
+
 # Show token in startup logs (default: false)
 # WARNING: Only set to 'true' in development/testing environments
 # SHOW_TOKEN=false
@@ -812,6 +819,7 @@ TOKEN_EXPIRY=$TOKEN_EXPIRY
 # - Security best practices:
 #   * Use BIND_ADDRESS=127.0.0.1 and reverse proxy with TLS
 #   * Keep TOKEN_EXPIRY short (1h-24h) for production
+#   * Keep TOKEN_MAX_USES low (3-10) to limit stolen token impact
 #   * Enable LDAP_TLS_VERIFY=true for production
 #   * Consider READ_ONLY_MODE=true for monitoring-only deployments
 # ============================================================================
