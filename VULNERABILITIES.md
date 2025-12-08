@@ -20,6 +20,30 @@ The AD Collector currently detects **87 vulnerability types** across 4 severity 
 - v2.2.3: 71 vulnerabilities (+1) - Added DOMAIN_ADMIN_IN_DESCRIPTION detection
 - v2.2.4: 71 vulnerabilities - Fixed SSE stream missing detections + added SSE step mapping table
 - **v2.5.0**: 87 vulnerabilities (+16) - Added 16 computer-specific vulnerability detections
+- **v2.6.1**: 87 vulnerabilities - 74 total SSE audit steps (includes process steps + vulnerability detections)
+
+---
+
+## SSE Audit Steps
+
+The audit process includes **74 SSE (Server-Sent Events) steps** that provide real-time progress tracking:
+
+**Process Steps (11):** Infrastructure and enumeration steps that don't detect specific vulnerabilities
+- `STEP_01_INIT` - Audit initialization
+- `STEP_02_USER_ENUM` - User enumeration
+- `STEP_09_SVC_SPN` - Service SPN enumeration
+- `STEP_10_SVC_NAME` - Service name analysis
+- `STEP_19_LAPS_READ` - LAPS configuration check
+- `STEP_26_TEMPORAL` - Temporal analysis
+- `STEP_27_GROUP_ENUM` - Group enumeration
+- `STEP_29_COMPUTER_ANALYSIS` - Computer object analysis
+- `STEP_30_OU_ANALYSIS` - Organizational Unit analysis
+- `STEP_57_RISK_SCORING` - Risk score calculation
+- `STEP_58_COMPLETE` - Audit completion
+
+**Vulnerability Detection Steps (63):** Steps that actively detect the 87 security vulnerabilities
+- Some steps detect multiple vulnerabilities (e.g., `STEP_03_PASSWORD_SEC` detects 4 password-related vulnerabilities)
+- Each step is mapped to its detected vulnerabilities in the table below
 
 ---
 
