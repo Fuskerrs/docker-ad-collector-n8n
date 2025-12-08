@@ -723,6 +723,9 @@ services:
       - "$PORT:8443"
     env_file:
       - .env
+    environment:
+      # Show token on first installation (you can remove this after getting the token)
+      - SHOW_TOKEN=true
     volumes:
       - ./certs:/app/certs:ro
     healthcheck:
