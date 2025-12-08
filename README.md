@@ -47,6 +47,50 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ##  Latest Updates
 
+### v2.4.0 (December 2025) 🔒 **MAJOR SECURITY UPDATE**
+**Token Usage Quota & Endpoint Access Control**
+
+#### 🛡️ Token Usage Quota (Anti-Theft Protection)
+- ✅ **Consumable Tokens** - Each JWT can only be used a limited number of times
+- ✅ **Configurable Limits** - Set max uses (3-100 or unlimited) during installation
+- ✅ **Usage Tracking** - Per-token usage counter with persistence across restarts
+- ✅ **HTTP Headers** - `X-Token-Usage`, `X-Token-Max-Uses`, `X-Token-Remaining`
+- ✅ **Automatic Cleanup** - Expired tokens removed every 5 minutes
+- 🎯 **Prevents Stolen Token Abuse** - Even if leaked, tokens have limited lifespan
+- 🔒 **Default**: 10 uses per token (vs unlimited in previous versions)
+
+#### 🎯 Endpoint Access Control
+- ✅ **3 Access Modes**:
+  - **full** - All endpoints enabled (audit + modifications)
+  - **audit-only** - Only audit endpoints (no user/group modifications)
+  - **no-audit** - All endpoints except audit (user management only)
+- ✅ **Interactive Selection** - Choose mode during installation
+- ✅ **Granular Security** - Deploy different collectors with different capabilities
+- 🎯 **Use Cases**: Monitoring-only collectors, restricted modification access
+
+#### 🔐 Enhanced Token Security
+- ✅ **Token File Persistence** - Token saved to file during installation
+- ✅ **Automatic Cleanup** - Token file deleted after user confirmation
+- ✅ **Hidden in Logs** - `SHOW_TOKEN` disabled by default (only shown during install)
+- ✅ **Reset Command** - `./install.sh --reset-token` regenerates token with new settings
+- 🔒 **Secure by Default** - No token visible in logs after installation
+
+#### 🚀 Installation Improvements
+- ✅ **Auto-Copy Script** - `install.sh` copied to collector directory automatically
+- ✅ **Easy Uninstall** - Run `./install.sh --uninstall` from collector directory
+- ✅ **Portable Permissions** - Works with any UID/GID on any system
+- ✅ **LDAP Hostname Check** - Automatically enabled for IP-based connections
+- ✅ **Interactive Configuration** - Token expiry, max uses, endpoint mode
+
+### v2.3.0 (December 2025) 🔒
+**Security Hardening & Production-Ready Defaults**
+
+- ✅ **Secure Binding** - Default to `127.0.0.1` (localhost only)
+- ✅ **Token Expiry** - Default changed from 365 days to 1 hour
+- ✅ **Rate Limiting** - Built-in protection against abuse
+- ✅ **Read-Only Mode** - Deploy collectors with query-only access
+- ✅ **Enhanced Logging** - Security-focused audit trails
+
 ### v1.7.2 (November 2025)
 **Enhanced Audit Details - Full AD Attributes**
 
@@ -54,18 +98,6 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 - ✅ **Security-Critical Fields**: `whenCreated`, `lastLogonTimestamp`, `pwdLastSet`, `adminCount`
 - ✅ **Contact Information**: `mail`, `userPrincipalName`, `description`
 - ✅ **Complete Context**: `title`, `department`, `manager`, `company`, `employeeID`, `telephoneNumber`
-- 🎯 **Better Identification** - Display names, job titles, and organizational context for all affected accounts
-- 🔍 **Enhanced Analysis** - Password in description detection, dormant account identification
-- 🚀 **Performance**: Null values filtered to minimize payload size
-
-### v1.7.1 (November 2025)
-**SSE Buffering Fix + Audit Cache**
-
-- ✅ **Fixed SSE `complete` event** - Force flush before closing connection to ensure final event is delivered
-- ✅ **Audit Result Cache** - 5-minute in-memory cache to avoid duplicate audits
-- ✅ **New Endpoint**: `GET /api/audit/last` - Returns cached audit result (no re-run)
-- ✅ **Fallback Support** - Frontend can use cached results when SSE `complete` event fails
-- 🚀 **Performance**: Eliminated duplicate audits in fallback scenarios
 
 ### v1.7.0 (November 2025)
 **Server-Sent Events (SSE) for Real-Time Progress**
@@ -73,18 +105,21 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 - ✅ **New Endpoint**: `POST /api/audit/stream` - Real-time audit progress via SSE
 - ✅ **15 Progress Events** - Step-by-step feedback during audit execution
 - ✅ **Better UX** - Enable progress bars and real-time status updates in UI
-- ✅ **Backward Compatible** - Original `POST /api/audit` endpoint unchanged
 
 ---
 
 ##  Features
 
-###  Security First
+###  Security First 🔒
+-  **Token Usage Quota** (v2.4.0) - Consumable tokens prevent stolen token abuse
+-  **Endpoint Access Control** (v2.4.0) - Granular control over audit/modification access
 -  **Full LDAPS Support** - Encrypted LDAP connections (port 636)
 -  **JWT Authentication** - Secure API access with bearer tokens
+-  **Rate Limiting** (v2.3.0) - Built-in protection against abuse
+-  **Secure Defaults** (v2.3.0) - Localhost binding, 1h token expiry
 -  **Self-Signed Certificates** - Built-in support for internal PKI
 -  **Environment-Based Config** - No hardcoded credentials
--  **Non-Root Container** - Runs with minimal privileges
+-  **Non-Root Container** - Runs with minimal privileges (UID 1001)
 
 ###  Performance & Reliability
 -  **Lightweight** - Only 138 MB Alpine-based Docker image
@@ -158,12 +193,17 @@ chmod +x install.sh
 
 ```bash
 ./install.sh                # Run interactive installation
-./install.sh --get-token    # Display current API token
-./install.sh --reset-token  # Regenerate API token
+./install.sh --get-token    # Display current API token (from file)
+./install.sh --reset-token  # Regenerate API token with new settings (v2.4.0)
 ./install.sh --status       # Check collector status
 ./install.sh --uninstall    # Remove AD Collector
 ./install.sh --help         # Show help
 ```
+
+**New in v2.4.0:**
+- Script automatically copied to collector directory
+- Run commands from anywhere: `cd ~/ad-collector && ./install.sh --reset-token`
+- Token reset now prompts for new `TOKEN_MAX_USES` setting
 
  **[Full Installation Script Documentation](INSTALL.md)**
 
@@ -222,10 +262,26 @@ LDAP_BIND_PASSWORD=YourSecurePassword
 
 # Security Settings
 LDAP_TLS_VERIFY=false  # Set to 'true' for production with valid certificates
+LDAP_SKIP_CERT_HOSTNAME_CHECK=true  # For IP-based LDAP_URL connections
 
-# Optional Settings
+# Network & Port
 PORT=8443
-TOKEN_EXPIRY=365d
+BIND_ADDRESS=127.0.0.1  # Localhost only (use 0.0.0.0 for all interfaces)
+
+# JWT Authentication (v2.3.0+)
+TOKEN_EXPIRY=1h  # Options: 1h, 24h, 7d, 30d (default: 1h)
+# API_TOKEN=  # Optional: provide your own JWT (auto-generated if not set)
+
+# Token Usage Quota (v2.4.0+) - Anti-Theft Protection
+TOKEN_MAX_USES=10  # Max uses per token (3-100 or 'unlimited', default: 10)
+
+# Endpoint Access Control (v2.4.0+)
+ENDPOINT_MODE=full  # Options: full, audit-only, no-audit (default: full)
+
+# Rate Limiting (v2.3.0+)
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_WINDOW_MS=60000  # 1 minute
+RATE_LIMIT_MAX_REQUESTS=100
 ```
 
 4. **Start the collector:**
@@ -342,23 +398,39 @@ The AD Collector provides 26 REST API endpoints:
 
 ##  Security Best Practices
 
+### Token Security (v2.4.0+) 🔒
+ **Set Token Max Uses** - Use `TOKEN_MAX_USES=10` (default) or lower for high-security environments
+ **Short Token Expiry** - Use `TOKEN_EXPIRY=1h` (default) for production, not 365d
+ **Delete Token Files** - Always delete token files after installation
+ **Regenerate Tokens** - Use `./install.sh --reset-token` to create new tokens with updated limits
+ **Hide Tokens in Logs** - Keep `SHOW_TOKEN=false` (default) in production
+ **Monitor Usage** - Check `X-Token-Usage` headers to track token consumption
+
+### Endpoint Access Control (v2.4.0+) 🎯
+ **Audit-Only Collectors** - Use `ENDPOINT_MODE=audit-only` for monitoring-only deployments
+ **No-Audit Collectors** - Use `ENDPOINT_MODE=no-audit` when audit endpoints aren't needed
+ **Principle of Least Privilege** - Deploy multiple collectors with different modes if needed
+ **Example**: One audit-only collector for security team, one full collector for automation
+
 ### Network Security
- Run on internal network only
- Use Docker networks for n8n ↔ Collector
- Firewall port 8443
- Never expose directly to internet
+ **Localhost Binding** - Default `BIND_ADDRESS=127.0.0.1` (use `0.0.0.0` only with firewall)
+ **Internal Network Only** - Never expose directly to internet
+ **Docker Networks** - Use Docker networks for n8n ↔ Collector communication
+ **Firewall Port 8443** - Restrict access to authorized hosts only
+ **Rate Limiting** - Keep `RATE_LIMIT_ENABLED=true` (100 req/min default)
 
 ### Credentials
  Use dedicated service account
- Minimal required permissions
+ Minimal required permissions (NOT Domain Admin)
  Rotate passwords regularly
  `.env` file permissions: `chmod 600`
- Never use Domain Admin
+ Store tokens securely (password manager, secrets vault)
 
 ### SSL/TLS
  Always use LDAPS (port 636) in production
  Valid SSL certificates when possible
- Don't skip certificate verification in production
+ `LDAP_TLS_VERIFY=true` for production
+ `LDAP_SKIP_CERT_HOSTNAME_CHECK=true` only for IP-based connections
 
 ---
 
