@@ -730,6 +730,7 @@ services:
       - BIND_ADDRESS=0.0.0.0
     volumes:
       - ./certs:/app/certs:ro
+      - ./token:/tmp/ad-collector-token.txt
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8443/health"]
       interval: 30s
@@ -876,20 +877,29 @@ pull_and_start() {
 get_token() {
     print_step "Retrieving API token..."
 
-    sleep 2
-    # More robust token extraction
-    TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+    sleep 3  # Wait for container to start and write token file
+
+    # Try to read from token file (primary method since v2.4.0)
+    if [ -f "./token" ]; then
+        TOKEN=$(cat ./token 2>/dev/null | tr -d '\n')
+    fi
+
+    # Fallback to logs if token file doesn't exist
+    if [ -z "$TOKEN" ]; then
+        TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+    fi
 
     if [ -z "$TOKEN" ]; then
-        # Fallback method
+        # Second fallback method
         TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
     fi
 
     if [ -z "$TOKEN" ]; then
         print_warning "Could not retrieve token automatically"
-        print_info "Run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
+        print_info "Check: cat $INSTALL_DIR/token"
+        print_info "Or run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
     else
-        print_success "Token retrieved"
+        print_success "Token retrieved from file"
     fi
 }
 
@@ -1043,9 +1053,16 @@ show_summary() {
     echo ""
     if [ -n "$TOKEN" ]; then
         echo -e "${GREEN}${TOKEN}${NC}"
+        echo ""
+        echo -e "${YELLOW}⚠️  IMPORTANT: This token will not be shown again after this installation.${NC}"
+        echo -e "${YELLOW}   Copy it now and store it securely!${NC}"
+        echo ""
+        echo -e "${CYAN}   Token is also saved to: ${INSTALL_DIR}/token${NC}"
+        echo -e "${CYAN}   Remove SHOW_TOKEN=true from docker-compose.yml for production${NC}"
     else
         echo -e "${RED}Could not retrieve token automatically.${NC}"
-        echo -e "${YELLOW}Run: docker compose logs | grep 'API Token'${NC}"
+        echo -e "${YELLOW}Check: cat $INSTALL_DIR/token${NC}"
+        echo -e "${YELLOW}Or run: docker compose logs | grep 'API Token'${NC}"
     fi
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1065,10 +1082,10 @@ show_summary() {
     echo ""
     echo -e "  ${BOLD}3. Useful commands:${NC}"
     echo -e "     • View logs:          ${CYAN}cd $INSTALL_DIR && docker compose logs -f${NC}"
-    echo -e "     • Get token again:    ${CYAN}cd $INSTALL_DIR && docker compose logs | grep 'API Token'${NC}"
+    echo -e "     • View token:         ${CYAN}cat $INSTALL_DIR/token${NC}"
     echo -e "     • Stop collector:     ${CYAN}cd $INSTALL_DIR && docker compose stop${NC}"
     echo -e "     • Start collector:    ${CYAN}cd $INSTALL_DIR && docker compose start${NC}"
-    echo -e "     • Restart (new token):${CYAN}cd $INSTALL_DIR && docker compose restart${NC}"
+    echo -e "     • Restart:            ${CYAN}cd $INSTALL_DIR && docker compose restart${NC}"
     echo -e "     • Remove:             ${CYAN}cd $INSTALL_DIR && docker compose down${NC}"
     echo ""
     echo -e "  ${BOLD}4. Documentation:${NC}"
@@ -1160,11 +1177,18 @@ show_token() {
 
     print_step "Retrieving current token..."
 
-    # More robust token extraction
-    CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+    # Try to read from token file first
+    if [ -f "./token" ]; then
+        CURRENT_TOKEN=$(cat ./token 2>/dev/null | tr -d '\n')
+    fi
+
+    # Fallback to logs if token file doesn't exist
+    if [ -z "$CURRENT_TOKEN" ]; then
+        CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+    fi
 
     if [ -z "$CURRENT_TOKEN" ]; then
-        # Fallback
+        # Second fallback
         CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
     fi
 
@@ -1176,6 +1200,7 @@ show_token() {
         echo ""
     else
         print_error "Could not retrieve token"
+        print_info "Token file: ./token may not exist"
         print_info "Container may not be running. Start it with: $DOCKER_COMPOSE_CMD up -d"
     fi
 }
@@ -1401,6 +1426,24 @@ main() {
     echo ""
     print_success "Installation completed successfully! 🎉"
     echo ""
+
+    # Cleanup: Remove token file after user confirmation
+    if [ -f "$INSTALL_DIR/token" ]; then
+        echo ""
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}Security Cleanup${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "${YELLOW}The API token is currently saved in: ${INSTALL_DIR}/token${NC}"
+        echo -e "${YELLOW}For security, it's recommended to delete this file after copying the token.${NC}"
+        echo ""
+        read -p "Press ENTER to delete the token file (or Ctrl+C to keep it)... "
+
+        rm -f "$INSTALL_DIR/token"
+        print_success "Token file deleted for security"
+        echo -e "${CYAN}You can still view the token in logs with: docker compose logs | grep 'API Token'${NC}"
+        echo ""
+    fi
 }
 
 # Run main function

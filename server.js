@@ -72,6 +72,15 @@ if (process.env.API_TOKEN) {
       jwtid: jti  // Standard JWT claim for token ID (sets 'jti' in payload automatically)
     }
   );
+
+  // Write token to file for install script and tooling to use
+  const TOKEN_FILE = process.env.TOKEN_FILE_PATH || '/tmp/ad-collector-token.txt';
+  try {
+    fs.writeFileSync(TOKEN_FILE, API_TOKEN, { mode: 0o600 });
+    console.log(`✅ Token saved to ${TOKEN_FILE}`);
+  } catch (err) {
+    console.warn(`⚠️  Failed to save token to file: ${err.message}`);
+  }
 }
 
 console.log('\n========================================');
