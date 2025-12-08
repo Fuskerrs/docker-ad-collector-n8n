@@ -730,7 +730,7 @@ services:
       - BIND_ADDRESS=0.0.0.0
     volumes:
       - ./certs:/app/certs:ro
-      - ./token:/tmp/ad-collector-token.txt
+      - ./token-data:/app/token-data
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8443/health"]
       interval: 30s
@@ -847,6 +847,10 @@ EOF
         print_success "Certificate saved to ./certs/ad-root-ca.crt"
     fi
 
+    # Create token-data directory for token file persistence
+    mkdir -p ./token-data
+    chmod 700 ./token-data
+
     print_success "Project created at $INSTALL_DIR"
 }
 
@@ -880,8 +884,8 @@ get_token() {
     sleep 3  # Wait for container to start and write token file
 
     # Try to read from token file (primary method since v2.4.0)
-    if [ -f "./token" ]; then
-        TOKEN=$(cat ./token 2>/dev/null | tr -d '\n')
+    if [ -f "./token-data/ad-collector-token.txt" ]; then
+        TOKEN=$(cat ./token-data/ad-collector-token.txt 2>/dev/null | tr -d '\n')
     fi
 
     # Fallback to logs if token file doesn't exist
@@ -896,7 +900,7 @@ get_token() {
 
     if [ -z "$TOKEN" ]; then
         print_warning "Could not retrieve token automatically"
-        print_info "Check: cat $INSTALL_DIR/token"
+        print_info "Check: cat $INSTALL_DIR/token-data/ad-collector-token.txt"
         print_info "Or run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
     else
         print_success "Token retrieved from file"
@@ -1057,11 +1061,11 @@ show_summary() {
         echo -e "${YELLOW}⚠️  IMPORTANT: This token will not be shown again after this installation.${NC}"
         echo -e "${YELLOW}   Copy it now and store it securely!${NC}"
         echo ""
-        echo -e "${CYAN}   Token is also saved to: ${INSTALL_DIR}/token${NC}"
+        echo -e "${CYAN}   Token is also saved to: ${INSTALL_DIR}/token-data/ad-collector-token.txt${NC}"
         echo -e "${CYAN}   Remove SHOW_TOKEN=true from docker-compose.yml for production${NC}"
     else
         echo -e "${RED}Could not retrieve token automatically.${NC}"
-        echo -e "${YELLOW}Check: cat $INSTALL_DIR/token${NC}"
+        echo -e "${YELLOW}Check: cat $INSTALL_DIR/token-data/ad-collector-token.txt${NC}"
         echo -e "${YELLOW}Or run: docker compose logs | grep 'API Token'${NC}"
     fi
     echo ""
@@ -1428,18 +1432,18 @@ main() {
     echo ""
 
     # Cleanup: Remove token file after user confirmation
-    if [ -f "$INSTALL_DIR/token" ]; then
+    if [ -f "$INSTALL_DIR/token-data/ad-collector-token.txt" ]; then
         echo ""
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${BOLD}Security Cleanup${NC}"
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo -e "${YELLOW}The API token is currently saved in: ${INSTALL_DIR}/token${NC}"
+        echo -e "${YELLOW}The API token is currently saved in: ${INSTALL_DIR}/token-data/ad-collector-token.txt${NC}"
         echo -e "${YELLOW}For security, it's recommended to delete this file after copying the token.${NC}"
         echo ""
         read -p "Press ENTER to delete the token file (or Ctrl+C to keep it)... "
 
-        rm -f "$INSTALL_DIR/token"
+        rm -f "$INSTALL_DIR/token-data/ad-collector-token.txt"
         print_success "Token file deleted for security"
         echo -e "${CYAN}You can still view the token in logs with: docker compose logs | grep 'API Token'${NC}"
         echo ""

@@ -74,8 +74,13 @@ if (process.env.API_TOKEN) {
   );
 
   // Write token to file for install script and tooling to use
-  const TOKEN_FILE = process.env.TOKEN_FILE_PATH || '/tmp/ad-collector-token.txt';
+  const TOKEN_FILE = process.env.TOKEN_FILE_PATH || '/app/token-data/ad-collector-token.txt';
   try {
+    // Ensure directory exists
+    const tokenDir = path.dirname(TOKEN_FILE);
+    if (!fs.existsSync(tokenDir)) {
+      fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
+    }
     fs.writeFileSync(TOKEN_FILE, API_TOKEN, { mode: 0o600 });
     console.log(`✅ Token saved to ${TOKEN_FILE}`);
   } catch (err) {
