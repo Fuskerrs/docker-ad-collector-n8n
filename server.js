@@ -61,15 +61,14 @@ if (process.env.API_TOKEN) {
   API_TOKEN = jwt.sign(
     {
       service: 'ad-collector',
-      created: Date.now(),
-      jti: jti  // Unique token ID for usage tracking
+      created: Date.now()
     },
     JWT_SECRET,
     {
       expiresIn: process.env.TOKEN_EXPIRY || '1h',  // Changed default from 365d to 1h
       algorithm: 'HS256',
       issuer: 'ad-collector',
-      jwtid: jti  // Standard JWT claim for token ID
+      jwtid: jti  // Standard JWT claim for token ID (sets 'jti' in payload automatically)
     }
   );
 }
@@ -237,8 +236,8 @@ function checkTokenUsageQuota(req, res, next) {
     return next();
   }
 
-  // Extract jti from JWT payload
-  const jti = req.user.jti || req.user.jwtid;
+  // Extract jti from JWT payload (jwtid option in jwt.sign() creates 'jti' claim in payload)
+  const jti = req.user.jti;
 
   // If no jti, it's an old token format or API_TOKEN - allow it
   if (!jti) {
