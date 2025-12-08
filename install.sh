@@ -848,10 +848,9 @@ EOF
     fi
 
     # Create token-data directory for token file persistence
+    # Using 777 permissions to work with any user/system (token file is deleted after installation)
     mkdir -p ./token-data
-    chmod 755 ./token-data
-    # Set ownership to container user (UID 1001) so it can write the token file
-    chown 1001:1001 ./token-data
+    chmod 777 ./token-data
 
     print_success "Project created at $INSTALL_DIR"
 }
@@ -1446,6 +1445,8 @@ main() {
         read -p "Press ENTER to delete the token file (or Ctrl+C to keep it)... "
 
         rm -f "$INSTALL_DIR/token-data/ad-collector-token.txt"
+        # Restrict directory permissions after token cleanup
+        chmod 700 "$INSTALL_DIR/token-data" 2>/dev/null || true
         print_success "Token file deleted for security"
         echo -e "${CYAN}You can still view the token in logs with: docker compose logs | grep 'API Token'${NC}"
         echo ""
