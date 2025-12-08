@@ -852,6 +852,13 @@ EOF
     mkdir -p ./token-data
     chmod 777 ./token-data
 
+    # Copy install script to collector directory for easy management
+    if [ -f "$0" ] && [ "$(cd "$(dirname "$0")" && pwd)" != "$INSTALL_DIR" ]; then
+        cp "$0" ./install.sh
+        chmod +x ./install.sh
+        print_success "Install script copied to $INSTALL_DIR/install.sh"
+    fi
+
     print_success "Project created at $INSTALL_DIR"
 }
 
@@ -1087,11 +1094,10 @@ show_summary() {
     echo ""
     echo -e "  ${BOLD}3. Useful commands:${NC}"
     echo -e "     • View logs:          ${CYAN}cd $INSTALL_DIR && docker compose logs -f${NC}"
-    echo -e "     • View token:         ${CYAN}cat $INSTALL_DIR/token${NC}"
     echo -e "     • Stop collector:     ${CYAN}cd $INSTALL_DIR && docker compose stop${NC}"
     echo -e "     • Start collector:    ${CYAN}cd $INSTALL_DIR && docker compose start${NC}"
     echo -e "     • Restart:            ${CYAN}cd $INSTALL_DIR && docker compose restart${NC}"
-    echo -e "     • Remove:             ${CYAN}cd $INSTALL_DIR && docker compose down${NC}"
+    echo -e "     • Uninstall:          ${CYAN}cd $INSTALL_DIR && ./install.sh --uninstall${NC}"
     echo ""
     echo -e "  ${BOLD}4. Documentation:${NC}"
     echo -e "     • Docker Hub: ${CYAN}https://hub.docker.com/r/fuskerrs97/ad-collector-n8n${NC}"
