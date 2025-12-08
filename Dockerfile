@@ -2,7 +2,7 @@ FROM node:18-alpine
 
 # Metadata
 LABEL maintainer="AD Collector for n8n"
-LABEL version="2.4.0"
+LABEL version="2.6.0"
 LABEL description="Active Directory Collector API for n8n-nodes-ad-admin"
 
 # Security: Run as non-root user
@@ -19,6 +19,7 @@ RUN npm install --production && \
 
 # Copy application files
 COPY server.js ./
+COPY export-audit.js ./
 COPY entrypoint.sh ./
 
 # Make entrypoint executable and set permissions

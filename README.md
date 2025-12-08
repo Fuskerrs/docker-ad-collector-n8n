@@ -47,6 +47,31 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ##  Latest Updates
 
+### v2.6.0 (December 2025) 📤 **LOCAL EXPORT FEATURE**
+**Audit Export for Air-Gapped Environments**
+
+#### 📤 Local Audit Export
+- ✅ **Standalone Export Script** - `export-audit.js` for offline audit exports
+- ✅ **No Network Exposure** - Run audits without exposing API publicly
+- ✅ **JSON Export** - Full audit data with all 87 vulnerability detections
+- ✅ **CLI Options** - `--include-details`, `--include-computers`, `--pretty`
+- ✅ **Enterprise Ready** - Perfect for security-conscious organizations
+- ✅ **Docker Integration** - `docker exec ad-collector node export-audit.js`
+- 🎯 **Use Case**: Enterprises that cannot expose collectors to external networks
+- 📖 **Documentation**: See [EXPORT.md](EXPORT.md) for complete guide
+
+### v2.5.0 (December 2025) 🖥️ **COMPUTER VULNERABILITIES**
+**16 New Computer-Specific Detections (87 Total)**
+
+#### 🖥️ Computer Security Assessment
+- ✅ **16 New Detections** - Comprehensive computer account security checks
+- ✅ **CRITICAL (4)** - Constrained delegation, RBCD, admin groups, DCSync rights
+- ✅ **HIGH (6)** - Stale accounts, password age, SPNs, LAPS, ACL abuse
+- ✅ **MEDIUM (5)** - Disabled computers, wrong OU, weak encryption, sensitive descriptions
+- ✅ **LOW (2)** - adminCount attribute, SMB signing
+- 🎯 **Total Vulnerabilities**: 71 → 87 (+16)
+- 📖 **Documentation**: See [VULNERABILITIES.md](VULNERABILITIES.md)
+
 ### v2.4.0 (December 2025) 🔒 **MAJOR SECURITY UPDATE**
 **Token Usage Quota & Endpoint Access Control**
 
