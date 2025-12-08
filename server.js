@@ -5532,7 +5532,7 @@ app.post('/api/audit/export', authenticate, requireAuditAccess, checkTokenUsageQ
     const postData = JSON.stringify({ includeDetails, includeComputers });
 
     const options = {
-      hostname: 'localhost',
+      hostname: '127.0.0.1',  // Use IPv4 explicitly to avoid IPv6 resolution issues
       port: config.port,
       path: '/api/audit',
       method: 'POST',
