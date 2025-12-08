@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.4.0",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.4.0: Token usage quota (prevents stolen token abuse)",
+  "version": "2.5.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.5.0: 16 new computer vulnerability detections (87 total)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

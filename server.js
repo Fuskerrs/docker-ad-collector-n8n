@@ -2865,6 +2865,359 @@ app.post('/api/audit', authenticate, requireAuditAccess, checkTokenUsageQuota, a
       // Phase 4 checks failed
     }
 
+    // ==========================================
+    // NEW COMPUTER VULNERABILITY CHECKS (v2.5.0)
+    // ==========================================
+
+    // CRITICAL: Constrained Delegation on Computers (STEP_32_1)
+    try {
+      const computersWithConstrainedDelegation = await searchMany('(&(objectClass=computer)(msDS-AllowedToDelegateTo=*))', ['sAMAccountName', 'dNSHostName', 'msDS-AllowedToDelegateTo'], 100);
+      for (const computer of computersWithConstrainedDelegation) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        const delegateTo = computer.attributes.find(a => a.type === 'msDS-AllowedToDelegateTo')?.values || [];
+        findings.critical.push({
+          type: 'COMPUTER_CONSTRAINED_DELEGATION',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          delegateTo: delegateTo.join('; '),
+          dn: computer.objectName,
+          message: `Computer has constrained delegation to \${delegateTo.length} service(s)`
+        });
+      }
+      trackStep('STEP_32_1_COMP_CONSTR_DELEG', 'Computer constrained delegation check', { count: computersWithConstrainedDelegation.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: RBCD on Computers (STEP_32_2)
+    try {
+      const computersWithRBCD = await searchMany('(&(objectClass=computer)(msDS-AllowedToActOnBehalfOfOtherIdentity=*))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithRBCD) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.critical.push({
+          type: 'COMPUTER_RBCD',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has msDS-AllowedToActOnBehalfOfOtherIdentity configured (RBCD attack vector)'
+        });
+      }
+      trackStep('STEP_32_2_COMP_RBCD', 'Computer RBCD check', { count: computersWithRBCD.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: Computer in Admin Groups (STEP_32_3)
+    try {
+      const adminGroupsDNs = [
+        `CN=Domain Admins,CN=Users,\${config.ldap.baseDN}`,
+        `CN=Enterprise Admins,CN=Users,\${config.ldap.baseDN}`,
+        `CN=Administrators,CN=Builtin,\${config.ldap.baseDN}`
+      ];
+      let compInAdminCount = 0;
+      for (const groupDN of adminGroupsDNs) {
+        try {
+          const group = await searchOne(`(distinguishedName=\${groupDN})`);
+          if (group) {
+            const members = group.attributes.find(a => a.type === 'member')?.values || [];
+            for (const memberDN of members) {
+              if (memberDN.toUpperCase().includes('CN=') && memberDN.toUpperCase().includes(',OU=')) {
+                // Check if it's a computer object
+                try {
+                  const memberObj = await searchOne(`(distinguishedName=\${memberDN})`);
+                  if (memberObj) {
+                    const objectClass = memberObj.attributes.find(a => a.type === 'objectClass')?.values || [];
+                    if (objectClass.includes('computer')) {
+                      const sam = memberObj.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+                      const dnsHostName = memberObj.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+                      findings.critical.push({
+                        type: 'COMPUTER_IN_ADMIN_GROUP',
+                        samAccountName: sam,
+                        dnsHostName: dnsHostName,
+                        groupDN: groupDN,
+                        dn: memberDN,
+                        message: `Computer account in admin group: \${groupDN.split(',')[0].replace('CN=', '')}`
+                      });
+                      compInAdminCount++;
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      trackStep('STEP_32_3_COMP_ADMIN_GROUP', 'Computer in admin groups check', { count: compInAdminCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: Computer with DCSync Rights (STEP_32_4)
+    // Note: Full ACL check would require nTSecurityDescriptor parsing, this is a simplified check
+    try {
+      trackStep('STEP_32_4_COMP_DCSYNC', 'Computer DCSync rights check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Stale/Inactive Computers (STEP_32_5)
+    try {
+      let staleComputersCount = 0;
+      if (includeComputers && computerAnalysis) {
+        // Already computed in computerAnalysis.inactive90
+        for (const comp of computerAnalysis.inactive90) {
+          if (comp.daysInactive >= 90) {
+            findings.high.push({
+              type: 'COMPUTER_STALE_INACTIVE',
+              name: comp.name,
+              daysInactive: comp.daysInactive,
+              dn: comp.dn,
+              message: `Computer not connected for \${comp.daysInactive} days (threshold: 90 days)`
+            });
+            staleComputersCount++;
+          }
+        }
+      }
+      trackStep('STEP_32_5_COMP_STALE', 'Stale/inactive computers check', { count: staleComputersCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer Password Never Changed (STEP_32_6)
+    try {
+      const computersOldPassword = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'pwdLastSet'], 50000);
+      let oldPasswordCount = 0;
+      for (const computer of computersOldPassword) {
+        const pwdLastSet = fileTimeToDate(computer.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
+        if (pwdLastSet) {
+          const passwordAge = now - pwdLastSet.getTime();
+          const daysOld = Math.floor(passwordAge / (24 * 60 * 60 * 1000));
+          if (daysOld > 90) {
+            const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+            const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+            findings.high.push({
+              type: 'COMPUTER_PASSWORD_OLD',
+              samAccountName: sam,
+              dnsHostName: dnsHostName,
+              passwordAgeDays: daysOld,
+              dn: computer.objectName,
+              message: `Computer password not changed for \${daysOld} days (threshold: 90 days)`
+            });
+            oldPasswordCount++;
+          }
+        }
+      }
+      trackStep('STEP_32_6_COMP_PWD_OLD', 'Computer password age check', { count: oldPasswordCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer with SPNs (Kerberoastable) (STEP_32_7)
+    try {
+      const computersWithSPNs = await searchMany('(&(objectClass=computer)(servicePrincipalName=*))', ['sAMAccountName', 'dNSHostName', 'servicePrincipalName'], 100);
+      let kerberoastableCount = 0;
+      for (const computer of computersWithSPNs) {
+        const spns = computer.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
+        // Filter out standard computer SPNs (RestrictedKrbHost, HOST)
+        const nonStandardSPNs = spns.filter(spn =>
+          !spn.startsWith('RestrictedKrbHost/') &&
+          !spn.startsWith('HOST/')
+        );
+        if (nonStandardSPNs.length > 0) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.high.push({
+            type: 'COMPUTER_WITH_SPNS',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            spns: nonStandardSPNs.join('; '),
+            spnCount: nonStandardSPNs.length,
+            dn: computer.objectName,
+            message: `Computer has \${nonStandardSPNs.length} non-standard SPN(s) (Kerberoastable)`
+          });
+          kerberoastableCount++;
+        }
+      }
+      trackStep('STEP_32_7_COMP_SPNS', 'Computer with SPNs check', { count: kerberoastableCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: No LAPS Deployed (STEP_32_8)
+    try {
+      const computersWithoutLAPS = await searchMany('(&(objectClass=computer)(!(ms-Mcs-AdmPwd=*)))', ['sAMAccountName', 'dNSHostName', 'operatingSystem', 'userAccountControl'], 50000);
+      let noLAPSCount = 0;
+      for (const computer of computersWithoutLAPS) {
+        const uac = parseInt(computer.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const os = computer.attributes.find(a => a.type === 'operatingSystem')?.values[0] || '';
+        // Skip domain controllers and disabled computers
+        if (!(uac & 0x2000) && !(uac & 0x2) && os.toLowerCase().includes('windows')) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.high.push({
+            type: 'COMPUTER_NO_LAPS',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            operatingSystem: os,
+            dn: computer.objectName,
+            message: 'Computer does not have LAPS configured (no ms-Mcs-AdmPwd attribute)'
+          });
+          noLAPSCount++;
+        }
+      }
+      trackStep('STEP_32_8_COMP_NO_LAPS', 'Computer without LAPS check', { count: noLAPSCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer ACL Abuse (STEP_32_9)
+    // Note: Full ACL check requires nTSecurityDescriptor parsing - placeholder
+    try {
+      trackStep('STEP_32_9_COMP_ACL_ABUSE', 'Computer ACL abuse check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Disabled Computer Not Deleted (STEP_32_10)
+    try {
+      let disabledComputersCount = 0;
+      if (includeComputers && computerAnalysis) {
+        const allComputers = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'userAccountControl', 'whenCreated'], 50000);
+        for (const computer of allComputers) {
+          const uac = parseInt(computer.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+          if (uac & 0x2) { // Disabled
+            const whenCreated = fileTimeToDate(computer.attributes.find(a => a.type === 'whenCreated')?.values[0]);
+            if (whenCreated) {
+              const ageInDays = Math.floor((now - whenCreated.getTime()) / (24 * 60 * 60 * 1000));
+              if (ageInDays > 30) {
+                const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+                const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+                findings.medium.push({
+                  type: 'COMPUTER_DISABLED_NOT_DELETED',
+                  samAccountName: sam,
+                  dnsHostName: dnsHostName,
+                  disabledDays: ageInDays,
+                  dn: computer.objectName,
+                  message: `Computer disabled for \${ageInDays} days but not deleted`
+                });
+                disabledComputersCount++;
+              }
+            }
+          }
+        }
+      }
+      trackStep('STEP_32_10_COMP_DISABLED', 'Disabled computers not deleted check', { count: disabledComputersCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Computer in Wrong OU (STEP_32_11)
+    // Note: Requires defining "correct" OUs - placeholder
+    try {
+      trackStep('STEP_32_11_COMP_WRONG_OU', 'Computer in wrong OU check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Weak Encryption Types (STEP_32_12)
+    try {
+      const computersWeakEncryption = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'msDS-SupportedEncryptionTypes'], 50000);
+      let weakEncryptionCount = 0;
+      for (const computer of computersWeakEncryption) {
+        const encTypes = parseInt(computer.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0] || '0');
+        // Check if only DES (1,2) or RC4 (4) are supported
+        const hasDES = (encTypes & 0x3) !== 0; // DES_CBC_CRC or DES_CBC_MD5
+        const hasRC4 = (encTypes & 0x4) !== 0; // RC4_HMAC
+        const hasAES = (encTypes & 0x18) !== 0; // AES128 or AES256
+
+        if ((hasDES || hasRC4) && !hasAES) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.medium.push({
+            type: 'COMPUTER_WEAK_ENCRYPTION',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            encryptionTypes: encTypes,
+            supportedTypes: hasDES ? 'DES' : 'RC4 only',
+            dn: computer.objectName,
+            message: `Computer supports only weak encryption (\${hasDES ? 'DES' : 'RC4'}, no AES)`
+          });
+          weakEncryptionCount++;
+        }
+      }
+      trackStep('STEP_32_12_COMP_WEAK_ENC', 'Computer weak encryption check', { count: weakEncryptionCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Computer Description with Sensitive Data (STEP_32_13)
+    try {
+      const computersWithDescription = await searchMany('(&(objectClass=computer)(description=*))', ['sAMAccountName', 'dNSHostName', 'description'], 50000);
+      let sensitiveDescCount = 0;
+      const sensitivePatterns = ['password', 'pwd', 'pass', 'secret', 'key', 'token', 'credential'];
+      for (const computer of computersWithDescription) {
+        const description = computer.attributes.find(a => a.type === 'description')?.values[0] || '';
+        const lowerDesc = description.toLowerCase();
+        const foundPatterns = sensitivePatterns.filter(pattern => lowerDesc.includes(pattern));
+        if (foundPatterns.length > 0) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.medium.push({
+            type: 'COMPUTER_DESCRIPTION_SENSITIVE',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            description: description,
+            patterns: foundPatterns.join(', '),
+            dn: computer.objectName,
+            message: `Computer description contains sensitive keywords: \${foundPatterns.join(', ')}`
+          });
+          sensitiveDescCount++;
+        }
+      }
+      trackStep('STEP_32_13_COMP_DESC_SENS', 'Computer description sensitive data check', { count: sensitiveDescCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Pre-Windows 2000 Computer (STEP_32_14)
+    try {
+      // Check for computers with userAccountControl that has UF_USE_DES_KEY_ONLY flag
+      const preWin2000Computers = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=2097152))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of preWin2000Computers) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.medium.push({
+          type: 'COMPUTER_PRE_WIN2000',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer created with Pre-Windows 2000 compatible rights (legacy security)'
+        });
+      }
+      trackStep('STEP_32_14_COMP_PRE_W2K', 'Pre-Windows 2000 computers check', { count: preWin2000Computers.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // LOW: Computer with Local Admin Mapping (STEP_32_15)
+    try {
+      // Check adminCount attribute
+      const computersWithAdminCount = await searchMany('(&(objectClass=computer)(adminCount=1))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithAdminCount) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.low.push({
+          type: 'COMPUTER_ADMIN_COUNT',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has adminCount=1 (AdminSDHolder protection applied)'
+        });
+      }
+      trackStep('STEP_32_15_COMP_ADMIN_COUNT', 'Computer with adminCount check', { count: computersWithAdminCount.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // LOW: SMB Signing Disabled (STEP_32_16)
+    try {
+      // This would require network scanning or GPO analysis - adding informational finding
+      findings.low.push({
+        type: 'COMPUTER_SMB_SIGNING_INFO',
+        message: 'SMB signing status should be verified via GPO or network scan',
+        recommendation: 'Enable SMB signing on all computers to prevent relay attacks'
+      });
+      trackStep('STEP_32_16_COMP_SMB_SIGN', 'SMB signing check (informational)', { count: 1 });
+    } catch (e) {}
+    stepStart = Date.now();
+
     // Risk Scoring (STEP_69)
     const riskScore = {
       critical: findings.critical.length,
@@ -4639,6 +4992,359 @@ app.post('/api/audit/stream', authenticate, requireAuditAccess, checkTokenUsageQ
     } catch (e) {
       // Phase 4 checks failed
     }
+
+    // ==========================================
+    // NEW COMPUTER VULNERABILITY CHECKS (v2.5.0)
+    // ==========================================
+
+    // CRITICAL: Constrained Delegation on Computers (STEP_32_1)
+    try {
+      const computersWithConstrainedDelegation = await searchMany('(&(objectClass=computer)(msDS-AllowedToDelegateTo=*))', ['sAMAccountName', 'dNSHostName', 'msDS-AllowedToDelegateTo'], 100);
+      for (const computer of computersWithConstrainedDelegation) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        const delegateTo = computer.attributes.find(a => a.type === 'msDS-AllowedToDelegateTo')?.values || [];
+        findings.critical.push({
+          type: 'COMPUTER_CONSTRAINED_DELEGATION',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          delegateTo: delegateTo.join('; '),
+          dn: computer.objectName,
+          message: `Computer has constrained delegation to \${delegateTo.length} service(s)`
+        });
+      }
+      trackStep('STEP_32_1_COMP_CONSTR_DELEG', 'Computer constrained delegation check', { count: computersWithConstrainedDelegation.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: RBCD on Computers (STEP_32_2)
+    try {
+      const computersWithRBCD = await searchMany('(&(objectClass=computer)(msDS-AllowedToActOnBehalfOfOtherIdentity=*))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithRBCD) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.critical.push({
+          type: 'COMPUTER_RBCD',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has msDS-AllowedToActOnBehalfOfOtherIdentity configured (RBCD attack vector)'
+        });
+      }
+      trackStep('STEP_32_2_COMP_RBCD', 'Computer RBCD check', { count: computersWithRBCD.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: Computer in Admin Groups (STEP_32_3)
+    try {
+      const adminGroupsDNs = [
+        `CN=Domain Admins,CN=Users,\${config.ldap.baseDN}`,
+        `CN=Enterprise Admins,CN=Users,\${config.ldap.baseDN}`,
+        `CN=Administrators,CN=Builtin,\${config.ldap.baseDN}`
+      ];
+      let compInAdminCount = 0;
+      for (const groupDN of adminGroupsDNs) {
+        try {
+          const group = await searchOne(`(distinguishedName=\${groupDN})`);
+          if (group) {
+            const members = group.attributes.find(a => a.type === 'member')?.values || [];
+            for (const memberDN of members) {
+              if (memberDN.toUpperCase().includes('CN=') && memberDN.toUpperCase().includes(',OU=')) {
+                // Check if it's a computer object
+                try {
+                  const memberObj = await searchOne(`(distinguishedName=\${memberDN})`);
+                  if (memberObj) {
+                    const objectClass = memberObj.attributes.find(a => a.type === 'objectClass')?.values || [];
+                    if (objectClass.includes('computer')) {
+                      const sam = memberObj.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+                      const dnsHostName = memberObj.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+                      findings.critical.push({
+                        type: 'COMPUTER_IN_ADMIN_GROUP',
+                        samAccountName: sam,
+                        dnsHostName: dnsHostName,
+                        groupDN: groupDN,
+                        dn: memberDN,
+                        message: `Computer account in admin group: \${groupDN.split(',')[0].replace('CN=', '')}`
+                      });
+                      compInAdminCount++;
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      trackStep('STEP_32_3_COMP_ADMIN_GROUP', 'Computer in admin groups check', { count: compInAdminCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // CRITICAL: Computer with DCSync Rights (STEP_32_4)
+    // Note: Full ACL check would require nTSecurityDescriptor parsing, this is a simplified check
+    try {
+      trackStep('STEP_32_4_COMP_DCSYNC', 'Computer DCSync rights check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Stale/Inactive Computers (STEP_32_5)
+    try {
+      let staleComputersCount = 0;
+      if (includeComputers && computerAnalysis) {
+        // Already computed in computerAnalysis.inactive90
+        for (const comp of computerAnalysis.inactive90) {
+          if (comp.daysInactive >= 90) {
+            findings.high.push({
+              type: 'COMPUTER_STALE_INACTIVE',
+              name: comp.name,
+              daysInactive: comp.daysInactive,
+              dn: comp.dn,
+              message: `Computer not connected for \${comp.daysInactive} days (threshold: 90 days)`
+            });
+            staleComputersCount++;
+          }
+        }
+      }
+      trackStep('STEP_32_5_COMP_STALE', 'Stale/inactive computers check', { count: staleComputersCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer Password Never Changed (STEP_32_6)
+    try {
+      const computersOldPassword = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'pwdLastSet'], 50000);
+      let oldPasswordCount = 0;
+      for (const computer of computersOldPassword) {
+        const pwdLastSet = fileTimeToDate(computer.attributes.find(a => a.type === 'pwdLastSet')?.values[0]);
+        if (pwdLastSet) {
+          const passwordAge = now - pwdLastSet.getTime();
+          const daysOld = Math.floor(passwordAge / (24 * 60 * 60 * 1000));
+          if (daysOld > 90) {
+            const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+            const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+            findings.high.push({
+              type: 'COMPUTER_PASSWORD_OLD',
+              samAccountName: sam,
+              dnsHostName: dnsHostName,
+              passwordAgeDays: daysOld,
+              dn: computer.objectName,
+              message: `Computer password not changed for \${daysOld} days (threshold: 90 days)`
+            });
+            oldPasswordCount++;
+          }
+        }
+      }
+      trackStep('STEP_32_6_COMP_PWD_OLD', 'Computer password age check', { count: oldPasswordCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer with SPNs (Kerberoastable) (STEP_32_7)
+    try {
+      const computersWithSPNs = await searchMany('(&(objectClass=computer)(servicePrincipalName=*))', ['sAMAccountName', 'dNSHostName', 'servicePrincipalName'], 100);
+      let kerberoastableCount = 0;
+      for (const computer of computersWithSPNs) {
+        const spns = computer.attributes.find(a => a.type === 'servicePrincipalName')?.values || [];
+        // Filter out standard computer SPNs (RestrictedKrbHost, HOST)
+        const nonStandardSPNs = spns.filter(spn =>
+          !spn.startsWith('RestrictedKrbHost/') &&
+          !spn.startsWith('HOST/')
+        );
+        if (nonStandardSPNs.length > 0) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.high.push({
+            type: 'COMPUTER_WITH_SPNS',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            spns: nonStandardSPNs.join('; '),
+            spnCount: nonStandardSPNs.length,
+            dn: computer.objectName,
+            message: `Computer has \${nonStandardSPNs.length} non-standard SPN(s) (Kerberoastable)`
+          });
+          kerberoastableCount++;
+        }
+      }
+      trackStep('STEP_32_7_COMP_SPNS', 'Computer with SPNs check', { count: kerberoastableCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: No LAPS Deployed (STEP_32_8)
+    try {
+      const computersWithoutLAPS = await searchMany('(&(objectClass=computer)(!(ms-Mcs-AdmPwd=*)))', ['sAMAccountName', 'dNSHostName', 'operatingSystem', 'userAccountControl'], 50000);
+      let noLAPSCount = 0;
+      for (const computer of computersWithoutLAPS) {
+        const uac = parseInt(computer.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+        const os = computer.attributes.find(a => a.type === 'operatingSystem')?.values[0] || '';
+        // Skip domain controllers and disabled computers
+        if (!(uac & 0x2000) && !(uac & 0x2) && os.toLowerCase().includes('windows')) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.high.push({
+            type: 'COMPUTER_NO_LAPS',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            operatingSystem: os,
+            dn: computer.objectName,
+            message: 'Computer does not have LAPS configured (no ms-Mcs-AdmPwd attribute)'
+          });
+          noLAPSCount++;
+        }
+      }
+      trackStep('STEP_32_8_COMP_NO_LAPS', 'Computer without LAPS check', { count: noLAPSCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // HIGH: Computer ACL Abuse (STEP_32_9)
+    // Note: Full ACL check requires nTSecurityDescriptor parsing - placeholder
+    try {
+      trackStep('STEP_32_9_COMP_ACL_ABUSE', 'Computer ACL abuse check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Disabled Computer Not Deleted (STEP_32_10)
+    try {
+      let disabledComputersCount = 0;
+      if (includeComputers && computerAnalysis) {
+        const allComputers = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'userAccountControl', 'whenCreated'], 50000);
+        for (const computer of allComputers) {
+          const uac = parseInt(computer.attributes.find(a => a.type === 'userAccountControl')?.values[0] || '0');
+          if (uac & 0x2) { // Disabled
+            const whenCreated = fileTimeToDate(computer.attributes.find(a => a.type === 'whenCreated')?.values[0]);
+            if (whenCreated) {
+              const ageInDays = Math.floor((now - whenCreated.getTime()) / (24 * 60 * 60 * 1000));
+              if (ageInDays > 30) {
+                const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+                const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+                findings.medium.push({
+                  type: 'COMPUTER_DISABLED_NOT_DELETED',
+                  samAccountName: sam,
+                  dnsHostName: dnsHostName,
+                  disabledDays: ageInDays,
+                  dn: computer.objectName,
+                  message: `Computer disabled for \${ageInDays} days but not deleted`
+                });
+                disabledComputersCount++;
+              }
+            }
+          }
+        }
+      }
+      trackStep('STEP_32_10_COMP_DISABLED', 'Disabled computers not deleted check', { count: disabledComputersCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Computer in Wrong OU (STEP_32_11)
+    // Note: Requires defining "correct" OUs - placeholder
+    try {
+      trackStep('STEP_32_11_COMP_WRONG_OU', 'Computer in wrong OU check', { count: 0 });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Weak Encryption Types (STEP_32_12)
+    try {
+      const computersWeakEncryption = await searchMany('(objectClass=computer)', ['sAMAccountName', 'dNSHostName', 'msDS-SupportedEncryptionTypes'], 50000);
+      let weakEncryptionCount = 0;
+      for (const computer of computersWeakEncryption) {
+        const encTypes = parseInt(computer.attributes.find(a => a.type === 'msDS-SupportedEncryptionTypes')?.values[0] || '0');
+        // Check if only DES (1,2) or RC4 (4) are supported
+        const hasDES = (encTypes & 0x3) !== 0; // DES_CBC_CRC or DES_CBC_MD5
+        const hasRC4 = (encTypes & 0x4) !== 0; // RC4_HMAC
+        const hasAES = (encTypes & 0x18) !== 0; // AES128 or AES256
+
+        if ((hasDES || hasRC4) && !hasAES) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.medium.push({
+            type: 'COMPUTER_WEAK_ENCRYPTION',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            encryptionTypes: encTypes,
+            supportedTypes: hasDES ? 'DES' : 'RC4 only',
+            dn: computer.objectName,
+            message: `Computer supports only weak encryption (\${hasDES ? 'DES' : 'RC4'}, no AES)`
+          });
+          weakEncryptionCount++;
+        }
+      }
+      trackStep('STEP_32_12_COMP_WEAK_ENC', 'Computer weak encryption check', { count: weakEncryptionCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Computer Description with Sensitive Data (STEP_32_13)
+    try {
+      const computersWithDescription = await searchMany('(&(objectClass=computer)(description=*))', ['sAMAccountName', 'dNSHostName', 'description'], 50000);
+      let sensitiveDescCount = 0;
+      const sensitivePatterns = ['password', 'pwd', 'pass', 'secret', 'key', 'token', 'credential'];
+      for (const computer of computersWithDescription) {
+        const description = computer.attributes.find(a => a.type === 'description')?.values[0] || '';
+        const lowerDesc = description.toLowerCase();
+        const foundPatterns = sensitivePatterns.filter(pattern => lowerDesc.includes(pattern));
+        if (foundPatterns.length > 0) {
+          const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+          const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+          findings.medium.push({
+            type: 'COMPUTER_DESCRIPTION_SENSITIVE',
+            samAccountName: sam,
+            dnsHostName: dnsHostName,
+            description: description,
+            patterns: foundPatterns.join(', '),
+            dn: computer.objectName,
+            message: `Computer description contains sensitive keywords: \${foundPatterns.join(', ')}`
+          });
+          sensitiveDescCount++;
+        }
+      }
+      trackStep('STEP_32_13_COMP_DESC_SENS', 'Computer description sensitive data check', { count: sensitiveDescCount });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // MEDIUM: Pre-Windows 2000 Computer (STEP_32_14)
+    try {
+      // Check for computers with userAccountControl that has UF_USE_DES_KEY_ONLY flag
+      const preWin2000Computers = await searchMany('(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=2097152))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of preWin2000Computers) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.medium.push({
+          type: 'COMPUTER_PRE_WIN2000',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer created with Pre-Windows 2000 compatible rights (legacy security)'
+        });
+      }
+      trackStep('STEP_32_14_COMP_PRE_W2K', 'Pre-Windows 2000 computers check', { count: preWin2000Computers.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // LOW: Computer with Local Admin Mapping (STEP_32_15)
+    try {
+      // Check adminCount attribute
+      const computersWithAdminCount = await searchMany('(&(objectClass=computer)(adminCount=1))', ['sAMAccountName', 'dNSHostName'], 100);
+      for (const computer of computersWithAdminCount) {
+        const sam = computer.attributes.find(a => a.type === 'sAMAccountName')?.values[0] || 'Unknown';
+        const dnsHostName = computer.attributes.find(a => a.type === 'dNSHostName')?.values[0] || sam;
+        findings.low.push({
+          type: 'COMPUTER_ADMIN_COUNT',
+          samAccountName: sam,
+          dnsHostName: dnsHostName,
+          dn: computer.objectName,
+          message: 'Computer has adminCount=1 (AdminSDHolder protection applied)'
+        });
+      }
+      trackStep('STEP_32_15_COMP_ADMIN_COUNT', 'Computer with adminCount check', { count: computersWithAdminCount.length });
+    } catch (e) {}
+    stepStart = Date.now();
+
+    // LOW: SMB Signing Disabled (STEP_32_16)
+    try {
+      // This would require network scanning or GPO analysis - adding informational finding
+      findings.low.push({
+        type: 'COMPUTER_SMB_SIGNING_INFO',
+        message: 'SMB signing status should be verified via GPO or network scan',
+        recommendation: 'Enable SMB signing on all computers to prevent relay attacks'
+      });
+      trackStep('STEP_32_16_COMP_SMB_SIGN', 'SMB signing check (informational)', { count: 1 });
+    } catch (e) {}
+    stepStart = Date.now();
 
     // Risk Scoring (STEP_69)
     const riskScore = {

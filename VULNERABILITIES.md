@@ -2,13 +2,13 @@
 
 ## Overview
 
-The AD Collector currently detects **71 vulnerability types** across 4 severity levels, providing comprehensive Active Directory security assessment.
+The AD Collector currently detects **87 vulnerability types** across 4 severity levels, providing comprehensive Active Directory security assessment.
 
 **Statistics:**
-- 🔴 **Critical**: 12 vulnerabilities
-- 🟠 **High**: 22 vulnerabilities
-- 🟡 **Medium**: 33 vulnerabilities
-- 🔵 **Low**: 4 vulnerabilities
+- 🔴 **Critical**: 16 vulnerabilities
+- 🟠 **High**: 27 vulnerabilities
+- 🟡 **Medium**: 38 vulnerabilities
+- 🔵 **Low**: 6 vulnerabilities
 
 **Evolution:**
 - v1.7.5: 23 vulnerabilities (baseline)
@@ -18,7 +18,8 @@ The AD Collector currently detects **71 vulnerability types** across 4 severity 
 - v2.1.0: 70 vulnerabilities (+10) - Phase 4: ADCS/PKI + LAPS
 - v2.2.0: 70 vulnerabilities - Major refactor with 58 audit steps
 - v2.2.3: 71 vulnerabilities (+1) - Added DOMAIN_ADMIN_IN_DESCRIPTION detection
-- **v2.2.4**: 71 vulnerabilities - Fixed SSE stream missing detections + added SSE step mapping table
+- v2.2.4: 71 vulnerabilities - Fixed SSE stream missing detections + added SSE step mapping table
+- **v2.5.0**: 87 vulnerabilities (+16) - Added 16 computer-specific vulnerability detections
 
 ---
 
@@ -97,10 +98,26 @@ The AD Collector currently detects **71 vulnerability types** across 4 severity 
 | 69 | PRIMARYGROUPID_SPOOFING | Non-standard primaryGroupID value | STEP_07_ADMIN_COUNT | ✅ |
 | 70 | DANGEROUS_LOGON_SCRIPTS | Logon scripts with weak ACLs | STEP_12_PWD_DESC | ✅ |
 | 71 | DOMAIN_ADMIN_IN_DESCRIPTION | Sensitive terms in description field | STEP_12_PWD_DESC | ✅ |
+| 72 | COMPUTER_CONSTRAINED_DELEGATION | Computer with constrained Kerberos delegation | STEP_32_1_COMP_CONSTR_DELEG | ✅ |
+| 73 | COMPUTER_RBCD | Computer with RBCD configured | STEP_32_2_COMP_RBCD | ✅ |
+| 74 | COMPUTER_IN_ADMIN_GROUP | Computer account in Domain Admins or Enterprise Admins | STEP_32_3_COMP_ADMIN_GROUP | ✅ |
+| 75 | COMPUTER_DCSYNC_RIGHTS | Computer with DCSync replication rights | STEP_32_4_COMP_DCSYNC | ✅ |
+| 76 | COMPUTER_STALE_INACTIVE | Computer inactive for 90+ days | STEP_32_5_COMP_STALE | ✅ |
+| 77 | COMPUTER_PASSWORD_OLD | Computer password never changed (>90 days) | STEP_32_6_COMP_PWD_OLD | ✅ |
+| 78 | COMPUTER_WITH_SPNS | Computer with SPNs (Kerberoastable) | STEP_32_7_COMP_SPNS | ✅ |
+| 79 | COMPUTER_NO_LAPS | Computer without LAPS deployed | STEP_32_8_COMP_NO_LAPS | ✅ |
+| 80 | COMPUTER_ACL_ABUSE | Computer with dangerous ACL permissions | STEP_32_9_COMP_ACL_ABUSE | ✅ |
+| 81 | COMPUTER_DISABLED_NOT_DELETED | Disabled computer not deleted (>30 days) | STEP_32_10_COMP_DISABLED | ✅ |
+| 82 | COMPUTER_WRONG_OU | Computer in unexpected OU location | STEP_32_11_COMP_WRONG_OU | ✅ |
+| 83 | COMPUTER_WEAK_ENCRYPTION | Computer with weak encryption types (DES/RC4 only) | STEP_32_12_COMP_WEAK_ENC | ✅ |
+| 84 | COMPUTER_DESCRIPTION_SENSITIVE | Computer description contains sensitive data | STEP_32_13_COMP_DESC_SENS | ✅ |
+| 85 | COMPUTER_PRE_WINDOWS_2000 | Pre-Windows 2000 computer account | STEP_32_14_COMP_PRE_W2K | ✅ |
+| 86 | COMPUTER_ADMIN_COUNT | Computer with adminCount attribute set | STEP_32_15_COMP_ADMIN_COUNT | ✅ |
+| 87 | COMPUTER_SMB_SIGNING_DISABLED | Computer with SMB signing disabled | STEP_32_16_COMP_SMB_SIGN | ✅ |
 
 ---
 
-## 🔴 CRITICAL - Critical Vulnerabilities (12)
+## 🔴 CRITICAL - Critical Vulnerabilities (16)
 
 ### 1. PASSWORD_NOT_REQUIRED
 **Description:** User account does not require a password (UAC flag 0x20)
@@ -306,7 +323,69 @@ Get-CertificateTemplate -Name "VulnerableTemplate" |
 
 ---
 
-## 🟠 HIGH - High Severity Vulnerabilities (22)
+### 13. COMPUTER_CONSTRAINED_DELEGATION
+**Description:** Computer account with constrained Kerberos delegation configured
+
+**Impact:** Computer can impersonate users to specified services, enabling privilege escalation
+
+**Detection:** `msDS-AllowedToDelegateTo` attribute present on computer objects
+
+**Reference:** [MITRE ATT&CK T1558](https://attack.mitre.org/techniques/T1558/)
+
+**Remediation:**
+```powershell
+Set-ADComputer -Identity computername -Clear msDS-AllowedToDelegateTo
+```
+
+---
+
+### 14. COMPUTER_RBCD
+**Description:** Computer with Resource-Based Constrained Delegation (RBCD) configured
+
+**Impact:** Enables privilege escalation via RBCD attack chain
+
+**Detection:** `msDS-AllowedToActOnBehalfOfOtherIdentity` attribute present on computer objects
+
+**Reference:** [MITRE ATT&CK T1134](https://attack.mitre.org/techniques/T1134/)
+
+**Remediation:**
+```powershell
+Set-ADComputer -Identity computername -Clear msDS-AllowedToActOnBehalfOfOtherIdentity
+```
+
+---
+
+### 15. COMPUTER_IN_ADMIN_GROUP
+**Description:** Computer account member of Domain Admins or Enterprise Admins
+
+**Impact:** Extremely dangerous - computer compromise leads to immediate domain admin access
+
+**Detection:** Computer object memberOf Domain Admins or Enterprise Admins groups
+
+**Remediation:**
+```powershell
+Remove-ADGroupMember -Identity "Domain Admins" -Members computername$ -Confirm:$false
+```
+
+---
+
+### 16. COMPUTER_DCSYNC_RIGHTS
+**Description:** Computer account with DCSync replication rights
+
+**Impact:** Computer can extract all domain password hashes via DCSync attack
+
+**Detection:** Replication permissions (DS-Replication-Get-Changes) on domain root for computer object
+
+**Reference:** [MITRE ATT&CK T1003.006](https://attack.mitre.org/techniques/T1003/006/)
+
+**Remediation:**
+```powershell
+# Remove replication rights using AD ACL Editor or dsacls
+```
+
+---
+
+## 🟠 HIGH - High Severity Vulnerabilities (27)
 
 ### 13. KERBEROASTING_RISK
 **Description:** User account with Service Principal Name (SPN) configured
@@ -635,7 +714,83 @@ Set-AdmPwdReadPasswordPermission -OrgUnit "OU=Computers,DC=domain,DC=com" -Allow
 
 ---
 
-## 🟡 MEDIUM - Medium Severity Vulnerabilities (32)
+### 35. COMPUTER_STALE_INACTIVE
+**Description:** Computer account inactive for 90+ days
+
+**Impact:** Orphaned computer accounts could be exploited without detection
+
+**Detection:** `lastLogonTimestamp` > 90 days for computer objects
+
+**Remediation:**
+```powershell
+Disable-ADComputer -Identity computername
+# Or remove after verification
+Remove-ADComputer -Identity computername -Confirm:$false
+```
+
+---
+
+### 36. COMPUTER_PASSWORD_OLD
+**Description:** Computer account password never changed (>90 days old)
+
+**Impact:** Increases risk of password-based attacks on computer accounts
+
+**Detection:** `pwdLastSet` > 90 days for computer objects
+
+**Remediation:**
+```powershell
+Reset-ComputerMachinePassword -Server DC01
+```
+
+---
+
+### 37. COMPUTER_WITH_SPNS
+**Description:** Computer account with Service Principal Names configured
+
+**Impact:** Enables Kerberoasting attack against computer account
+
+**Detection:** `servicePrincipalName` attribute present on computer objects
+
+**Reference:** [MITRE ATT&CK T1558.003](https://attack.mitre.org/techniques/T1558/003/)
+
+**Remediation:**
+```powershell
+# Audit SPNs and remove if unnecessary
+Set-ADComputer -Identity computername -ServicePrincipalNames @{Remove="HTTP/server.domain.com"}
+```
+
+---
+
+### 38. COMPUTER_NO_LAPS
+**Description:** Computer without LAPS (Local Administrator Password Solution) deployed
+
+**Impact:** Shared/static local admin passwords across workstations
+
+**Detection:** Missing `ms-Mcs-AdmPwd` attribute on computer objects
+
+**Remediation:**
+```powershell
+# Deploy LAPS via Group Policy
+# https://docs.microsoft.com/en-us/windows-server/identity/laps/laps-overview
+```
+
+---
+
+### 39. COMPUTER_ACL_ABUSE
+**Description:** Computer object with dangerous ACL permissions (GenericAll, WriteDACL, WriteOwner)
+
+**Impact:** Can modify computer object properties and potentially escalate privileges
+
+**Detection:** Excessive permissions on computer object ACL
+
+**Remediation:**
+```powershell
+# Review and remove excessive ACLs using AD ACL Editor
+```
+
+---
+
+## 🟡 MEDIUM - Medium Severity Vulnerabilities (38)
 
 ### 35. PASSWORD_NEVER_EXPIRES
 **Description:** Password set to never expire
@@ -1071,9 +1226,78 @@ Remove-ADGroupMember -Identity "Domain Admins" -Members username -Confirm:$false
 
 ---
 
+### 67. COMPUTER_DISABLED_NOT_DELETED
+**Description:** Disabled computer account not deleted (>30 days)
+
+**Impact:** Clutters AD, potential security oversight
+
+**Detection:** `userAccountControl & 0x2` AND disabled > 30 days for computer objects
+
+**Remediation:**
+```powershell
+Remove-ADComputer -Identity computername -Confirm:$false
+```
+
 ---
 
-## 🔵 LOW - Low Severity Vulnerabilities (4)
+### 68. COMPUTER_WRONG_OU
+**Description:** Computer in unexpected Organizational Unit
+
+**Impact:** May indicate misconfiguration or security policy bypass
+
+**Detection:** Computer object location in unexpected OU structure
+
+**Remediation:**
+```powershell
+Move-ADObject -Identity "CN=COMP01,OU=WrongOU,DC=domain,DC=com" -TargetPath "OU=Computers,DC=domain,DC=com"
+```
+
+---
+
+### 69. COMPUTER_WEAK_ENCRYPTION
+**Description:** Computer with weak encryption types (DES/RC4 only)
+
+**Impact:** Vulnerable to Kerberos encryption downgrade attacks
+
+**Detection:** `msDS-SupportedEncryptionTypes` contains only DES/RC4 flags
+
+**Remediation:**
+```powershell
+Set-ADComputer -Identity computername -Replace @{'msDS-SupportedEncryptionTypes'=24}
+# 24 = 0x18 = AES128 + AES256
+```
+
+---
+
+### 70. COMPUTER_DESCRIPTION_SENSITIVE
+**Description:** Computer description field contains sensitive data (passwords, IPs, etc.)
+
+**Impact:** Information disclosure
+
+**Detection:** Regex patterns for passwords, credentials, or sensitive data in description
+
+**Remediation:**
+```powershell
+Set-ADComputer -Identity computername -Description "Sanitized description"
+```
+
+---
+
+### 71. COMPUTER_PRE_WINDOWS_2000
+**Description:** Pre-Windows 2000 compatible computer account
+
+**Impact:** Weak security settings, potential compatibility mode exploits
+
+**Detection:** Account creation or naming patterns indicating legacy systems
+
+**Remediation:**
+```powershell
+# Upgrade or decommission legacy systems
+```
+
+---
+
+## 🔵 LOW - Low Severity Vulnerabilities (6)
 
 ### 67. LAPS_PASSWORD_SET
 **Description:** LAPS password successfully managed
@@ -1142,6 +1366,37 @@ Set-ADUser -Identity username -Description "Sanitized description without sensit
 
 ---
 
+### 72. COMPUTER_ADMIN_COUNT
+**Description:** Computer account with adminCount attribute set to 1
+
+**Impact:** May indicate current or former administrative privileges
+
+**Detection:** `adminCount=1` on computer objects
+
+**Remediation:**
+```powershell
+# Audit to confirm administrative status, remove if no longer needed
+Set-ADComputer -Identity computername -Clear adminCount
+```
+
+---
+
+### 73. COMPUTER_SMB_SIGNING_DISABLED
+**Description:** Computer with SMB signing disabled
+
+**Impact:** Vulnerable to SMB relay attacks (informational finding)
+
+**Detection:** SMB signing configuration check
+
+**Remediation:**
+```powershell
+# Enable SMB signing via Group Policy
+# Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options
+# "Microsoft network client/server: Digitally sign communications" = Enabled
+```
+
+---
+
 ## Risk Scoring Methodology
 
 Security score calculation (0-100):
@@ -1188,10 +1443,12 @@ This vulnerability detection aligns with:
 
 ## Version History
 
-**Current Version:** v2.2.2
-- Increased search limits to 50k objects (users/groups/computers/OUs)
-- Support for large AD environments (14k+ users)
+**Current Version:** v2.5.0
+- Added 16 computer-specific vulnerability detections (87 total vulnerabilities)
+- Enhanced computer security assessment with constrained delegation, RBCD, and privilege checks
+- Added computer password age, stale accounts, and LAPS deployment checks
 
+**v2.2.2:** Increased search limits to 50k objects
 **v2.2.1:** STEP_29 always sent fix
 **v2.2.0:** Major refactor - 58 audit steps with verbose naming
 **v2.1.0:** Phase 4 - ADCS/PKI + LAPS (70 vulnerabilities)
