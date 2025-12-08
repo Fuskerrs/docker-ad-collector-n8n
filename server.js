@@ -24,6 +24,7 @@ if (fs.existsSync(certPath)) {
 
 // Configuration from environment variables
 const READ_ONLY_MODE = process.env.READ_ONLY_MODE === 'true';
+const TOKEN_MAX_USES = parseInt(process.env.TOKEN_MAX_USES || '3'); // Default: 3 uses per token
 
 const config = {
   port: process.env.PORT || 8443,
@@ -127,7 +128,6 @@ let lastAuditCache = {
 // Token Usage Tracking Store (v2.4.0 Security Enhancement)
 // ============================================================================
 const TOKEN_USAGE_STORE_PATH = process.env.TOKEN_USAGE_STORE_PATH || '/tmp/ad-collector-token-usage.json';
-const TOKEN_MAX_USES = parseInt(process.env.TOKEN_MAX_USES || '3'); // Default: 3 uses per token
 
 // In-memory store: { jti: { used_count, max_uses, exp, first_use, last_use } }
 let tokenUsageStore = {};
