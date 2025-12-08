@@ -636,6 +636,15 @@ get_user_input() {
     read -p "   Token expiry (e.g., 1h, 24h, 7d) [1h]: " input
     TOKEN_EXPIRY=${input:-1h}
     echo ""
+
+    # Token usage quota (v2.4.0)
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔒 Token Usage Quota (Security)${NC}"
+    echo -e "${CYAN}   Limits how many times a token can be used (prevents stolen token abuse)${NC}"
+    echo ""
+    read -p "   Max uses per token (3-100, or 'unlimited') [10]: " input
+    TOKEN_MAX_USES=${input:-10}
+    echo ""
 }
 
 show_configuration_summary() {
@@ -651,7 +660,10 @@ show_configuration_summary() {
     echo -e "  Base DN:       $LDAP_BASE_DN"
     echo -e "  Bind DN:       $LDAP_BIND_DN"
     echo -e "  TLS Verify:    $LDAP_TLS_VERIFY"
+    echo ""
+    echo -e "${BOLD}Security Settings:${NC}"
     echo -e "  Token Expiry:  $TOKEN_EXPIRY"
+    echo -e "  Token Max Uses: $TOKEN_MAX_USES"
     echo ""
 
     read -p "Proceed with installation? (y/n): " -n 1 -r
@@ -785,9 +797,9 @@ TOKEN_EXPIRY=$TOKEN_EXPIRY
 
 # Token usage quota (v2.4.0 Security Enhancement)
 # Maximum number of times a token can be used before being exhausted
-# Default: 3 uses per token (prevents stolen token abuse)
+# Default: 10 uses per token (prevents stolen token abuse)
 # Set to 'unlimited' or '0' to disable quota
-# TOKEN_MAX_USES=3
+TOKEN_MAX_USES=$TOKEN_MAX_USES
 
 # Show token in startup logs (default: false)
 # WARNING: Only set to 'true' in development/testing environments
@@ -1149,7 +1161,27 @@ reset_token() {
         exit 1
     fi
 
+    # Ask for new TOKEN_MAX_USES
+    echo ""
+    CURRENT_MAX_USES=$(grep "^TOKEN_MAX_USES=" .env 2>/dev/null | cut -d'=' -f2)
+    CURRENT_MAX_USES=${CURRENT_MAX_USES:-10}
+    echo -e "${YELLOW}Current token max uses: ${CYAN}$CURRENT_MAX_USES${NC}"
+    read -p "New max uses per token (3-100, or 'unlimited') [$CURRENT_MAX_USES]: " input
+    NEW_MAX_USES=${input:-$CURRENT_MAX_USES}
+    echo ""
+
     print_step "Preparing token reset..."
+
+    # Update TOKEN_MAX_USES in .env
+    if [ -f ".env" ]; then
+        if grep -q "^TOKEN_MAX_USES=" .env; then
+            sed -i "s/^TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
+        elif grep -q "^# TOKEN_MAX_USES=" .env; then
+            sed -i "s/^# TOKEN_MAX_USES=.*/TOKEN_MAX_USES=$NEW_MAX_USES/" .env
+        else
+            echo "TOKEN_MAX_USES=$NEW_MAX_USES" >> .env
+        fi
+    fi
 
     # Temporarily enable SHOW_TOKEN in .env for token retrieval
     if [ -f ".env" ]; then
@@ -1192,6 +1224,9 @@ reset_token() {
         print_success "New token generated:"
         echo ""
         echo -e "${GREEN}$NEW_TOKEN${NC}"
+        echo ""
+        echo -e "${CYAN}Token settings:${NC}"
+        echo -e "  Max uses: ${BOLD}$NEW_MAX_USES${NC}"
         echo ""
         echo -e "${YELLOW}⚠️  Token will not be shown in logs (SHOW_TOKEN disabled)${NC}"
         echo -e "${YELLOW}   Save it now - you can regenerate with: ./install.sh --reset-token${NC}"
