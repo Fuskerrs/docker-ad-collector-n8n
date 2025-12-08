@@ -1149,28 +1149,64 @@ reset_token() {
         exit 1
     fi
 
-    print_step "Restarting container to generate new token..."
-    $DOCKER_COMPOSE_CMD restart
+    print_step "Preparing token reset..."
 
-    sleep 3
+    # Temporarily enable SHOW_TOKEN in .env for token retrieval
+    if [ -f ".env" ]; then
+        sed -i 's/^# SHOW_TOKEN=false/SHOW_TOKEN=true/' .env
+        sed -i 's/^#SHOW_TOKEN=false/SHOW_TOKEN=true/' .env
+        sed -i 's/^SHOW_TOKEN=false/SHOW_TOKEN=true/' .env
+    fi
 
-    # More robust token extraction
-    NEW_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
+    # Ensure token-data directory exists with correct permissions
+    mkdir -p ./token-data
+    chmod 777 ./token-data
 
+    # Remove old token file to force new generation
+    rm -f ./token-data/ad-collector-token.txt
+
+    print_step "Regenerating token (this will restart the container)..."
+    $DOCKER_COMPOSE_CMD down
+    $DOCKER_COMPOSE_CMD up -d
+
+    print_step "Waiting for new token..."
+    sleep 5
+
+    # Read token from file (primary method)
+    if [ -f "./token-data/ad-collector-token.txt" ]; then
+        NEW_TOKEN=$(cat ./token-data/ad-collector-token.txt 2>/dev/null | tr -d '\n')
+    fi
+
+    # Fallback: read from logs if file doesn't exist
     if [ -z "$NEW_TOKEN" ]; then
-        # Fallback
-        NEW_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
+        NEW_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | tail -1)
+    fi
+
+    # Disable SHOW_TOKEN in .env for security
+    if [ -f ".env" ]; then
+        sed -i 's/^SHOW_TOKEN=true/# SHOW_TOKEN=false/' .env
     fi
 
     if [ -n "$NEW_TOKEN" ]; then
         echo ""
         print_success "New token generated:"
         echo ""
-        echo -e "${CYAN}$NEW_TOKEN${NC}"
+        echo -e "${GREEN}$NEW_TOKEN${NC}"
         echo ""
+        echo -e "${YELLOW}⚠️  Token will not be shown in logs (SHOW_TOKEN disabled)${NC}"
+        echo -e "${YELLOW}   Save it now - you can regenerate with: ./install.sh --reset-token${NC}"
+        echo ""
+
+        # Ask to delete token file
+        read -p "Delete token file for security? (Y/n): " delete_token
+        if [ -z "$delete_token" ] || [ "$delete_token" = "y" ] || [ "$delete_token" = "Y" ]; then
+            rm -f ./token-data/ad-collector-token.txt
+            chmod 700 ./token-data 2>/dev/null || true
+            print_success "Token file deleted"
+        fi
     else
         print_error "Could not retrieve new token"
-        print_info "Run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
+        print_info "Check: cat ./token-data/ad-collector-token.txt"
     fi
 }
 
@@ -1189,18 +1225,21 @@ show_token() {
     print_step "Retrieving current token..."
 
     # Try to read from token file first
-    if [ -f "./token" ]; then
-        CURRENT_TOKEN=$(cat ./token 2>/dev/null | tr -d '\n')
+    if [ -f "./token-data/ad-collector-token.txt" ]; then
+        CURRENT_TOKEN=$(cat ./token-data/ad-collector-token.txt 2>/dev/null | tr -d '\n')
     fi
 
-    # Fallback to logs if token file doesn't exist
+    # If no token file, explain and offer to reset
     if [ -z "$CURRENT_TOKEN" ]; then
-        CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -oP 'API Token:\s*\K[^\s]+' | head -1)
-    fi
-
-    if [ -z "$CURRENT_TOKEN" ]; then
-        # Second fallback
-        CURRENT_TOKEN=$($DOCKER_COMPOSE_CMD logs ad-collector 2>/dev/null | grep -A 1 "API Token:" | tail -1 | sed 's/.*| //' | xargs)
+        print_warning "Token file not found (deleted for security after installation)"
+        echo ""
+        echo -e "${CYAN}To generate a new token, run:${NC}"
+        echo -e "  ${YELLOW}./install.sh --reset-token${NC}"
+        echo ""
+        echo -e "${CYAN}Or check logs (if SHOW_TOKEN was enabled):${NC}"
+        echo -e "  ${YELLOW}docker compose logs | grep 'API Token'${NC}"
+        echo ""
+        return 1
     fi
 
     if [ -n "$CURRENT_TOKEN" ]; then
