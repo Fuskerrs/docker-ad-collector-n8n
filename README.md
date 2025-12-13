@@ -47,17 +47,29 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ##  Latest Updates
 
+### v2.6.1 (December 2025) 🌐 **API EXPORT ENDPOINT**
+**Server-to-Server JSON Export**
+
+#### 🌐 API Export Endpoint
+- ✅ **New Endpoint** - `POST /api/audit/export` for programmatic exports
+- ✅ **Local Network Ready** - Export from one server to another on local network
+- ✅ **Metadata Headers** - Audit summary in HTTP headers (duration, score, counts)
+- ✅ **Downloadable JSON** - `Content-Disposition: attachment` for file downloads
+- ✅ **All Options Supported** - `includeDetails`, `includeComputers`, `filename`, `pretty`
+- 🎯 **Use Case**: Local network exports, automated backup workflows
+- 📖 **Documentation**: See [API_GUIDE.md](API_GUIDE.md) for endpoint details
+
 ### v2.6.0 (December 2025) 📤 **LOCAL EXPORT FEATURE**
 **Audit Export for Air-Gapped Environments**
 
-#### 📤 Local Audit Export
+#### 📤 CLI Export Script
 - ✅ **Standalone Export Script** - `export-audit.js` for offline audit exports
 - ✅ **No Network Exposure** - Run audits without exposing API publicly
 - ✅ **JSON Export** - Full audit data with all 87 vulnerability detections
 - ✅ **CLI Options** - `--include-details`, `--include-computers`, `--pretty`
 - ✅ **Enterprise Ready** - Perfect for security-conscious organizations
 - ✅ **Docker Integration** - `docker exec ad-collector node export-audit.js`
-- 🎯 **Use Case**: Enterprises that cannot expose collectors to external networks
+- 🎯 **Use Case**: Air-gapped environments, enterprises with strict network policies
 - 📖 **Documentation**: See [EXPORT.md](EXPORT.md) for complete guide
 
 ### v2.5.0 (December 2025) 🖥️ **COMPUTER VULNERABILITIES**
