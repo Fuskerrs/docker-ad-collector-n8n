@@ -23,9 +23,28 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ---
 
+## 📖 Table of Contents
+
+- [What is AD Collector?](#what-is-ad-collector)
+- [How It Works](#how-it-works)
+  - [Architecture Overview](#architecture-overview)
+  - [Security Audit Engine](#security-audit-engine)
+  - [Management Endpoints](#management-endpoints)
+- [Quick Links](#quick-links)
+- [Latest Updates](#latest-updates)
+- [Features](#features)
+- [Installation](#installation)
+
+---
+
 ##  What is AD Collector?
 
-**AD Collector** is a **lightweight REST API server** that acts as a secure bridge between [n8n](https://n8n.io) and your Active Directory infrastructure. It enables the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node to perform powerful AD operations in **Collector Mode**.
+**AD Collector** is a **production-ready REST API server** that acts as a secure bridge between [n8n](https://n8n.io) and your Active Directory infrastructure. It provides two core capabilities:
+
+1. **🔍 Security Auditing** - Comprehensive Active Directory vulnerability assessment (87 detections)
+2. **⚙️ AD Management** - Safe automation of user/group/computer operations via REST API
+
+Built specifically for the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node, it enables powerful AD automation in **Collector Mode** while maintaining enterprise-grade security.
 
 ###  Why Use Collector Mode?
 
@@ -36,12 +55,211 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 |  Certificate management per workflow |  Centralized certificate handling |
 |  Multiple LDAP connections |  Connection pooling and optimization |
 |  Limited connection control |  Rate limiting and monitoring |
+|  No audit capabilities |  Built-in security assessment |
 
 **Perfect for:**
 -  Enterprise environments with strict network policies
--  Security-conscious organizations
+-  Security-conscious organizations requiring audit trails
 -  Cloud-hosted n8n instances
 -  High-performance AD automation at scale
+-  Compliance and security monitoring workflows
+
+---
+
+## 🔧 How It Works
+
+### Architecture Overview
+
+```
+┌─────────────┐         HTTPS (8443)        ┌──────────────────┐         LDAP/LDAPS        ┌─────────────────┐
+│             │ ◄──────────────────────────► │                  │ ◄──────────────────────► │                 │
+│  n8n Node   │     JWT Authentication      │  AD Collector    │   Service Account Auth   │ Active Directory│
+│             │      REST API Calls          │   (Docker)       │    Connection Pooling    │                 │
+└─────────────┘                              └──────────────────┘                          └─────────────────┘
+                                                     │
+                                                     │ Persistent Storage
+                                                     ▼
+                                              ┌──────────────────┐
+                                              │ Token Usage DB   │
+                                              │ (token-data/)    │
+                                              └──────────────────┘
+```
+
+**Key Components:**
+
+1. **REST API Server** (Node.js + Express)
+   - Listens on port 8443 (configurable)
+   - JWT token authentication with usage quotas
+   - Rate limiting and request validation
+
+2. **LDAP/LDAPS Client** (ldapjs)
+   - Persistent connection pooling to Active Directory
+   - Automatic reconnection on failures
+   - TLS certificate validation (optional)
+
+3. **Token Management System**
+   - Consumable tokens (max uses: 3-100 or unlimited)
+   - Usage tracking with SQLite persistence
+   - Automatic expired token cleanup
+
+4. **Audit Engine**
+   - Real-time LDAP queries with minimal performance impact
+   - 74 SSE progress steps for live feedback
+   - Export to JSON for offline analysis
+
+---
+
+### 🔍 Security Audit Engine
+
+The collector includes a **comprehensive Active Directory security assessment engine** that detects **87 vulnerability types** across users, groups, and computers.
+
+#### What Gets Audited?
+
+**Users & Groups (71 vulnerabilities)**
+- 🔴 **Critical (12)**: Password vulnerabilities, unconstrained delegation, ASREP roasting, ESC1-ESC8 certificate attacks
+- 🟠 **High (21)**: Kerberoasting, privilege escalation paths, ACL abuse, ADCS misconfigurations
+- 🟡 **Medium (32)**: Weak policies, group nesting issues, LAPS deployment gaps
+- 🔵 **Low (6)**: Informational findings, legacy compatibility issues
+
+**Computer Accounts (16 vulnerabilities)** *(v2.5.0+)*
+- 🔴 **Critical (4)**: Constrained delegation, RBCD, admin group membership, DCSync rights
+- 🟠 **High (6)**: Stale accounts, old passwords, Kerberoastable SPNs, missing LAPS, ACL abuse
+- 🟡 **Medium (5)**: Disabled computers not deleted, wrong OU placement, weak encryption, sensitive descriptions
+- 🔵 **Low (2)**: AdminCount attribute anomalies, SMB signing status
+
+#### How Auditing Works
+
+1. **Connection** - Collector connects to AD using service account
+2. **Enumeration** - Queries users, groups, computers, GPOs, ADCS templates
+3. **Analysis** - Runs 87 detection rules against collected data
+4. **Scoring** - Calculates security score (0-100) based on findings
+5. **Export** - Returns JSON with vulnerabilities categorized by severity
+
+#### Audit Modes
+
+**Standard Audit** (`POST /api/audit`)
+```json
+{
+  "includeDetails": true,      // Full vulnerability details
+  "includeComputers": true     // Include computer-specific checks
+}
+```
+
+**Real-Time Streaming** (`POST /api/audit/stream`)
+- Server-Sent Events (SSE) with 74 progress steps
+- Live progress tracking for UI integration
+- Same data as standard audit, delivered incrementally
+
+**Export to JSON** (`POST /api/audit/export`)
+- Downloadable JSON file for offline analysis
+- Metadata in HTTP headers (duration, score, counts)
+- Perfect for compliance reporting and historical tracking
+
+**CLI Export** (v2.6.0)
+```bash
+docker exec ad-collector node export-audit.js \
+  --output audit.json \
+  --include-details \
+  --include-computers \
+  --pretty
+```
+
+#### Performance
+
+| AD Size | Audit Duration | Memory Usage |
+|---------|----------------|--------------|
+| 1,000 objects | ~15 seconds | ~80 MB |
+| 10,000 objects | ~45 seconds | ~120 MB |
+| 50,000 objects | ~3 minutes | ~200 MB |
+| 100,000+ objects | ~5-8 minutes | ~350 MB |
+
+**Optimization:** Audits run entirely in-memory with no database writes. Only findings are returned.
+
+---
+
+### ⚙️ Management Endpoints
+
+Beyond auditing, the collector provides **Active Directory management operations** for automation workflows.
+
+#### User Management
+- `POST /api/users/create` - Create new user accounts
+- `POST /api/users/modify` - Update user attributes
+- `POST /api/users/delete` - Remove user accounts
+- `POST /api/users/disable` - Disable accounts
+- `POST /api/users/enable` - Enable accounts
+- `POST /api/users/reset-password` - Reset user passwords
+- `POST /api/users/unlock` - Unlock locked accounts
+- `POST /api/users/move` - Move users between OUs
+
+#### Group Management
+- `POST /api/groups/create` - Create new groups
+- `POST /api/groups/modify` - Update group attributes
+- `POST /api/groups/delete` - Remove groups
+- `POST /api/groups/add-member` - Add users to groups
+- `POST /api/groups/remove-member` - Remove users from groups
+- `POST /api/groups/list-members` - Query group membership
+
+#### Computer Management
+- `POST /api/computers/create` - Create computer accounts
+- `POST /api/computers/delete` - Remove computer accounts
+- `POST /api/computers/move` - Move computers between OUs
+
+#### Query Endpoints
+- `POST /api/query` - Custom LDAP queries with filters
+- `POST /api/search` - Search users/groups/computers
+- `POST /api/test-connection` - Verify LDAP connectivity
+
+#### Access Control Modes
+
+The collector supports **3 endpoint access modes** (configurable during installation):
+
+1. **`full`** (Default) - All endpoints enabled
+   - Audit + modifications
+   - Use for: Full-featured automation workflows
+
+2. **`audit-only`** - Only audit endpoints
+   - No user/group/computer modifications
+   - Use for: Security monitoring, compliance scanning
+
+3. **`no-audit`** - All endpoints except audit
+   - User management only
+   - Use for: Provisioning workflows without security scanning overhead
+
+**Example:** Deploy one collector in `audit-only` mode for monitoring, another in `full` mode for automation.
+
+---
+
+## 🔗 Quick Links
+
+### 📚 Documentation
+
+- **[API Guide](API_GUIDE.md)** - Complete API reference with examples
+- **[Vulnerabilities List](VULNERABILITIES.md)** - All 87 detections with remediation steps
+- **[Export Guide](EXPORT.md)** - Audit export workflows and examples
+- **[Frontend Integration](FRONTEND_CHANGELOG.md)** - Guide for UI developers
+
+### 🔐 Security & Compliance
+
+- **[MITRE ATT&CK Mapping](VULNERABILITIES.md#compliance-mapping)** - T1558, T1003, T1484, T1098
+- **[Risk Scoring Methodology](VULNERABILITIES.md#risk-scoring-methodology)** - Score calculation (0-100)
+- **[ISO 27001 Alignment](VULNERABILITIES.md#compliance-mapping)** - A.9, A.14
+- **[NIST CSF Coverage](VULNERABILITIES.md#compliance-mapping)** - PR.AC, DE.CM
+
+### 🚀 Quick Start
+
+```bash
+# Install
+curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh | bash
+
+# Update
+cd ~/ad-collector && ./install.sh --update
+
+# Reset Token
+./install.sh --reset-token
+
+# Export Audit
+docker exec ad-collector node export-audit.js --output audit.json --pretty
+```
 
 ---
 
