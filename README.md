@@ -4,9 +4,9 @@
 
 ![AD Collector Logo](https://raw.githubusercontent.com/Fuskerrs/n8n-nodes-ad-admin/master/icons/activeDirectoryAdmin.svg)
 
-**The official Active Directory Collector API for n8n automation**
+**Active Directory Security Auditing & Management API**
 
-A secure, lightweight, and production-ready bridge between n8n and Active Directory LDAP/LDAPS
+A secure, production-ready REST API for Active Directory security auditing and automation
 
 [![Docker Image](https://img.shields.io/docker/v/fuskerrs97/ad-collector-n8n?label=Docker%20Image&logo=docker)](https://hub.docker.com/r/fuskerrs97/ad-collector-n8n)
 [![Docker Pulls](https://img.shields.io/docker/pulls/fuskerrs97/ad-collector-n8n)](https://hub.docker.com/r/fuskerrs97/ad-collector-n8n)
@@ -39,30 +39,50 @@ A secure, lightweight, and production-ready bridge between n8n and Active Direct
 
 ##  What is AD Collector?
 
-**AD Collector** is a **production-ready REST API server** that acts as a secure bridge between [n8n](https://n8n.io) and your Active Directory infrastructure. It provides two core capabilities:
+**AD Collector** is a **standalone REST API server** for Active Directory security and automation. It provides two core capabilities:
 
 1. **🔍 Security Auditing** - Comprehensive Active Directory vulnerability assessment (87 detections)
 2. **⚙️ AD Management** - Safe automation of user/group/computer operations via REST API
 
-Built specifically for the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node, it enables powerful AD automation in **Collector Mode** while maintaining enterprise-grade security.
+**Use it standalone** for security monitoring, compliance reporting, or integrate it with automation tools like [n8n](https://n8n.io) using the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node.
 
-###  Why Use Collector Mode?
+### Common Use Cases
 
-| **Direct Mode** | **Collector Mode** ⭐ |
+**Standalone Usage:**
+- 🔐 **Security Auditing** - Regular AD vulnerability scans with JSON export
+- 📊 **Compliance Reporting** - Automated security assessments for ISO/NIST compliance
+- 🌐 **Web Dashboard Integration** - Connect to custom frontend for AD security monitoring
+- 📈 **SIEM Integration** - Feed audit data to security platforms (Splunk, ELK, etc.)
+- 🔄 **Scheduled Scans** - Cron jobs exporting audit results for analysis
+
+**With n8n Integration:**
+- 🤖 **User Provisioning** - Automated onboarding/offboarding workflows
+- 📧 **Security Alerts** - Notify teams when critical vulnerabilities detected
+- 🔄 **AD Sync Workflows** - Keep external systems in sync with AD
+- 🛠️ **Bulk Operations** - Mass user/group modifications via workflows
+
+### Key Advantages
+
+**vs Direct LDAP Access:**
+
+| **Direct LDAP** | **AD Collector** ⭐ |
 |-----------------|---------------------|
-|  Requires opening LDAP ports (389/636) to n8n |  Only needs HTTP/HTTPS (8443) access |
+|  Requires LDAP ports (389/636) open |  Only HTTP/HTTPS (8443) |
 |  Complex network configuration |  Simple Docker deployment |
-|  Certificate management per workflow |  Centralized certificate handling |
-|  Multiple LDAP connections |  Connection pooling and optimization |
-|  Limited connection control |  Rate limiting and monitoring |
-|  No audit capabilities |  Built-in security assessment |
+|  Certificate management per client |  Centralized certificate handling |
+|  Multiple connections per client |  Connection pooling and optimization |
+|  No rate limiting |  Built-in rate limiting and monitoring |
+|  No audit capabilities |  87 built-in vulnerability detections |
+|  Manual security checks |  Automated compliance reporting |
 
 **Perfect for:**
--  Enterprise environments with strict network policies
--  Security-conscious organizations requiring audit trails
--  Cloud-hosted n8n instances
--  High-performance AD automation at scale
--  Compliance and security monitoring workflows
+-  🏢 Enterprise environments with strict network policies
+-  🔒 Security-conscious organizations requiring audit trails
+-  ☁️ Cloud-hosted applications (no direct AD access)
+-  🚀 High-performance automation at scale
+-   📋 Compliance and security monitoring (ISO 27001, NIST CSF)
+-  🌐 Custom web dashboards and security portals
+-  🔄 Integration with SIEM, monitoring, and automation platforms
 
 ---
 
@@ -71,18 +91,24 @@ Built specifically for the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-
 ### Architecture Overview
 
 ```
-┌─────────────┐         HTTPS (8443)        ┌──────────────────┐         LDAP/LDAPS        ┌─────────────────┐
-│             │ ◄──────────────────────────► │                  │ ◄──────────────────────► │                 │
-│  n8n Node   │     JWT Authentication      │  AD Collector    │   Service Account Auth   │ Active Directory│
-│             │      REST API Calls          │   (Docker)       │    Connection Pooling    │                 │
-└─────────────┘                              └──────────────────┘                          └─────────────────┘
-                                                     │
-                                                     │ Persistent Storage
-                                                     ▼
-                                              ┌──────────────────┐
-                                              │ Token Usage DB   │
-                                              │ (token-data/)    │
-                                              └──────────────────┘
+┌─────────────────┐         HTTPS (8443)        ┌──────────────────┐         LDAP/LDAPS        ┌─────────────────┐
+│                 │ ◄──────────────────────────► │                  │ ◄──────────────────────► │                 │
+│  Any HTTP       │     JWT Authentication      │  AD Collector    │   Service Account Auth   │ Active Directory│
+│  Client:        │      REST API Calls          │   (Docker)       │    Connection Pooling    │                 │
+│                 │                              │                  │                          │                 │
+│ • Web Frontend  │                              │  - Audit Engine  │                          │  Users, Groups, │
+│ • n8n Workflow  │                              │  - REST API      │                          │  Computers,     │
+│ • SIEM Platform │                              │  - Token Mgmt    │                          │  GPOs, ADCS     │
+│ • curl/Postman  │                              │  - Rate Limiting │                          │                 │
+│ • Python Script │                              │                  │                          │                 │
+└─────────────────┘                              └──────────────────┘                          └─────────────────┘
+                                                         │
+                                                         │ Persistent Storage
+                                                         ▼
+                                                  ┌──────────────────┐
+                                                  │ Token Usage DB   │
+                                                  │ (token-data/)    │
+                                                  └──────────────────┘
 ```
 
 **Key Components:**
