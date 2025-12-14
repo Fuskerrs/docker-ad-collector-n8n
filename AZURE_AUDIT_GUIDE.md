@@ -146,6 +146,8 @@ curl -X POST http://localhost:8443/api/audit/azure/status \
 
 ### Run Azure Audit with SSE Streaming
 
+**Basic Usage (works with all license types):**
+
 ```bash
 TOKEN="your-api-token"
 
@@ -154,6 +156,44 @@ curl -N -X POST http://localhost:8443/api/audit/azure/stream \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
+
+**For Free/Basic Azure AD Tenants:**
+
+If you have a **free Azure AD tenant** (without Premium P1/P2), use the `skipPremiumCheck` option:
+
+```bash
+TOKEN="your-api-token"
+
+curl -N -X POST http://localhost:8443/api/audit/azure/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skipPremiumCheck": true,
+    "includeRiskyUsers": false
+  }'
+```
+
+**Request Body Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `skipPremiumCheck` | boolean | `false` | Skip Premium P2 features to allow auditing free tenants |
+| `includeRiskyUsers` | boolean | `true` | Include Identity Protection (risky users) - requires Azure AD P2 |
+
+**What works without Premium:**
+- ✅ User enumeration and analysis
+- ✅ Group enumeration
+- ✅ Directory roles and privileged access detection
+- ✅ Application and Service Principal analysis
+- ✅ Conditional Access policy review (with Policy.Read.All permission)
+- ✅ Inactive user detection
+- ✅ Guest user analysis
+- ✅ Password age checking
+- ✅ Application credential expiration
+
+**What requires Premium P2:**
+- ❌ Identity Protection (risky users, risky sign-ins)
+- ❌ Advanced risk detection
 
 **Progress Steps (20 total):**
 ```

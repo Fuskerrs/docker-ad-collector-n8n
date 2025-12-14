@@ -13,6 +13,16 @@
  * - Group analysis
  * - SSE streaming with 20 progress steps
  *
+ * Request Body Options:
+ * - skipPremiumCheck: (boolean) Skip Premium P2 features to allow auditing free tenants
+ * - includeRiskyUsers: (boolean, default: true) Include risky users detection (requires P2)
+ *
+ * Example for free tenants:
+ * {
+ *   "skipPremiumCheck": true,
+ *   "includeRiskyUsers": false
+ * }
+ *
  * @requires @microsoft/microsoft-graph-client
  */
 
@@ -549,6 +559,11 @@ async function azureAuditStreamHandler(req, res) {
   res.setHeader('X-Accel-Buffering', 'no');
 
   try {
+    // Parse request body options
+    const options = req.body || {};
+    const skipPremiumCheck = options.skipPremiumCheck === true;
+    const includeRiskyUsers = options.includeRiskyUsers !== false; // Default true
+
     // Get Azure credentials from environment
     const tenantId = process.env.AZURE_TENANT_ID;
     const clientId = process.env.AZURE_CLIENT_ID;
@@ -606,10 +621,20 @@ async function azureAuditStreamHandler(req, res) {
     const caPolicies = await fetchConditionalAccessPolicies(client);
     sendProgress(res, 'AZURE_STEP_09_CA_POLICIES', 'completed', caPolicies.length);
 
-    // STEP 10: Fetch risky users
+    // STEP 10: Fetch risky users (skip if Premium not available or skipPremiumCheck enabled)
     sendProgress(res, 'AZURE_STEP_10_RISKY_USERS', 'in_progress');
-    const riskyUsers = await fetchRiskyUsers(client);
-    sendProgress(res, 'AZURE_STEP_10_RISKY_USERS', 'completed', riskyUsers.length);
+    let riskyUsers = [];
+    if (!skipPremiumCheck && includeRiskyUsers) {
+      try {
+        riskyUsers = await fetchRiskyUsers(client);
+        sendProgress(res, 'AZURE_STEP_10_RISKY_USERS', 'completed', riskyUsers.length);
+      } catch (error) {
+        console.warn('Risky users fetch failed (Premium P2 likely required), continuing without:', error.message);
+        sendProgress(res, 'AZURE_STEP_10_RISKY_USERS', 'completed', 0, { skipped: true, reason: 'Premium P2 required' });
+      }
+    } else {
+      sendProgress(res, 'AZURE_STEP_10_RISKY_USERS', 'completed', 0, { skipped: true, reason: 'Disabled via skipPremiumCheck' });
+    }
 
     // Start vulnerability detection
     const allFindings = {
