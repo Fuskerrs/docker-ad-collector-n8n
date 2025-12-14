@@ -297,13 +297,15 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 
 #### ☁️ Azure AD / Entra ID Integration
 - ✅ **Microsoft Graph API** - Comprehensive Azure AD security audit
-- ✅ **20 SSE Progress Steps** - Real-time progress streaming for Azure audit
+- ✅ **20 SSE Progress Steps** - Real-time progress streaming with `event:` and `data:` format
 - ✅ **Hybrid Format** - Universal format compatible with existing AD frontends
+- ✅ **Free Tenant Support** - `skipPremiumCheck` option for auditing without Premium P1/P2
 - ✅ **Identity Protection** - Risky users/sign-ins detection (requires Azure AD P2)
 - ✅ **Conditional Access** - Policy analysis and MFA enforcement checks
 - ✅ **Privileged Access** - Role assignment and Global Admin monitoring
 - ✅ **Application Security** - Credential expiration and vulnerability detection
 - ✅ **Guest User Analysis** - External access risk assessment
+- ✅ **12 Azure Vulnerabilities** - CRITICAL/HIGH/MEDIUM/LOW severity detections
 - 🎯 **Use Case**: Unified on-premises + cloud AD security monitoring
 - 📖 **Documentation**: See [AZURE_AUDIT_GUIDE.md](AZURE_AUDIT_GUIDE.md) for complete guide
 
@@ -318,6 +320,14 @@ AZURE_ENABLED=true
 AZURE_TENANT_ID=your-tenant-id
 AZURE_CLIENT_ID=your-client-id
 AZURE_CLIENT_SECRET=your-client-secret
+```
+
+**Free Tenant Usage:**
+```json
+{
+  "skipPremiumCheck": true,
+  "includeRiskyUsers": false
+}
 ```
 
 ### v2.6.1 (December 2025) 🌐 **API EXPORT ENDPOINT**
@@ -457,7 +467,7 @@ AZURE_CLIENT_SECRET=your-client-secret
 -  **Real-Time Streaming** - 20-step SSE progress tracking for Azure audits
 
 ###  Developer Friendly
--  **29 REST API Endpoints** - Full CRUD operations (27 AD + 2 Azure)
+-  **31 REST API Endpoints** - Full CRUD operations (26 AD + 3 Audit + 2 Azure)
 -  **Docker Compose Ready** - One-command deployment
 -  **Comprehensive Documentation** - Setup guides, troubleshooting, best practices
 -  **Environment Variables** - Flexible configuration
@@ -674,11 +684,20 @@ Add an **Active Directory Admin** node to your workflow and start automating!
 
 ##  API Endpoints
 
-The AD Collector provides 26 REST API endpoints:
+The AD Collector provides 31 REST API endpoints:
 
 ### System (2)
 - `GET /health` - Health check
 - `POST /api/test-connection` - Test LDAP connectivity
+
+### Azure AD / Entra ID (2) ☁️ *v2.7.0*
+- `POST /api/audit/azure/stream` - Run Azure AD audit with SSE streaming
+- `POST /api/audit/azure/status` - Check Azure configuration status
+
+### Security Audit (3)
+- `POST /api/audit` - Run AD security audit (standard)
+- `POST /api/audit/stream` - Run AD security audit (SSE streaming)
+- `GET /api/audit/last` - Get last cached audit result
 
 ### Users (12)
 - `POST /api/users/get` - Get user details
