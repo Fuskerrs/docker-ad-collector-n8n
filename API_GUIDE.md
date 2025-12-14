@@ -1650,8 +1650,44 @@ curl -X GET http://localhost:8443/api/audit/last \
 
 **Body:**
 ```json
-{}
+{
+  "skipPremiumCheck": false,
+  "includeRiskyUsers": true
+}
 ```
+
+**Request Body Options:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skipPremiumCheck` | boolean | `false` | Skip Premium P2 features to allow auditing free tenants |
+| `includeRiskyUsers` | boolean | `true` | Include Identity Protection (risky users) - requires Azure AD P2 |
+
+**For Free/Basic Azure AD Tenants:**
+
+If you have a **free Azure AD tenant** (without Premium P1/P2), use the `skipPremiumCheck` option:
+
+```json
+{
+  "skipPremiumCheck": true,
+  "includeRiskyUsers": false
+}
+```
+
+**What works without Premium:**
+- ✅ User enumeration and analysis
+- ✅ Group enumeration
+- ✅ Directory roles and privileged access detection
+- ✅ Application and Service Principal analysis
+- ✅ Conditional Access policy review (with Policy.Read.All permission)
+- ✅ Inactive user detection
+- ✅ Guest user analysis
+- ✅ Password age checking
+- ✅ Application credential expiration
+
+**What requires Premium P2:**
+- ❌ Identity Protection (risky users, risky sign-ins)
+- ❌ Advanced risk detection
 
 **SSE Progress Steps (20 total):**
 ```
@@ -1681,24 +1717,49 @@ AZURE_STEP_20_COMPLETE          → Azure audit complete
 ```bash
 TOKEN="your-api-token"
 
+# Standard audit (requires Premium P2 for risky users)
 curl -N -X POST http://localhost:8443/api/audit/azure/stream \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
+
+# Free tenant audit (skip Premium features)
+curl -N -X POST http://localhost:8443/api/audit/azure/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"skipPremiumCheck": true, "includeRiskyUsers": false}'
 ```
 
 **SSE Response Format:**
+
+Azure audit uses **Server-Sent Events (SSE)** with the same format as on-premises AD audit for compatibility:
+
+**Connection Event:**
 ```
-data: {"step":"AZURE_STEP_01_INIT","description":"Initializing Azure audit","status":"completed"}
+event: connected
+data: {"message":"Azure audit stream connected","timestamp":"2025-12-14T13:35:22.418Z"}
 
-data: {"step":"AZURE_STEP_02_AUTH","description":"Authenticating to Microsoft Graph API","status":"completed"}
+```
 
-data: {"step":"AZURE_STEP_04_USERS","description":"Fetching all users","status":"completed","count":1234}
+**Progress Events:**
+```
+event: progress
+data: {"step":"AZURE_STEP_01_INIT","description":"Initializing Azure audit","status":"completed","count":1,"duration":"0.01s"}
 
-...
+event: progress
+data: {"step":"AZURE_STEP_02_AUTH","description":"Authenticating to Microsoft Graph API","status":"completed","count":1,"duration":"0.34s"}
 
-data: {"step":"AZURE_STEP_20_COMPLETE","description":"Azure audit complete","status":"completed","count":87,"findings":{"critical":12,"high":34,"medium":56,"low":10,"score":68}}
+event: progress
+data: {"step":"AZURE_STEP_04_USERS","description":"Fetching all users","status":"completed","count":1234,"duration":"2.15s"}
 
+event: progress
+data: {"step":"AZURE_STEP_20_COMPLETE","description":"Azure audit complete","status":"completed","count":87,"duration":"0.12s","findings":{"critical":12,"high":34,"medium":56,"low":10}}
+
+```
+
+**Final Audit Result:**
+```
+event: complete
 data: {
   "success": true,
   "audit": {
@@ -1787,8 +1848,31 @@ data: {
 
 **Error Response (Azure not configured):**
 ```
-data: {"step":"ERROR","status":"failed","error":"Azure credentials not configured. Run install.sh to configure Azure audit.","description":"Azure audit failed"}
+event: error
+data: {"success":false,"error":"Azure credentials not configured. Run install.sh to configure Azure audit."}
 ```
+
+**SSE Event Types:**
+
+| Event | When | Data |
+|-------|------|------|
+| `connected` | On connection | Connection timestamp |
+| `progress` | 20 times during audit | Step completion with stats (in_progress or completed) |
+| `complete` | At the end | Full audit report |
+| `error` | On error | Error message |
+
+**Progress Status Values:**
+- `in_progress` - Step is currently executing
+- `completed` - Step finished successfully
+- `skipped` - Step skipped (e.g., Premium features on free tenant)
+
+**Event Data Fields:**
+- `step` - Step identifier (AZURE_STEP_XX)
+- `description` - Human-readable step description
+- `status` - Step status (in_progress, completed, skipped)
+- `count` - Number of items processed
+- `duration` - Step execution time (e.g., "0.52s")
+- `findings` - Vulnerability counts by severity (optional)
 
 ---
 
