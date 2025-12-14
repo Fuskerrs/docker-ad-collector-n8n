@@ -21,6 +21,7 @@ The AD Collector currently detects **87 vulnerability types** across 4 severity 
 - v2.2.4: 71 vulnerabilities - Fixed SSE stream missing detections + added SSE step mapping table
 - **v2.5.0**: 87 vulnerabilities (+16) - Added 16 computer-specific vulnerability detections
 - **v2.6.1**: 87 vulnerabilities - 74 total SSE audit steps (includes process steps + vulnerability detections)
+- **v2.7.0**: 87 AD vulnerabilities + Azure Entra ID audit support with additional cloud-specific detections
 
 ---
 
@@ -1421,6 +1422,137 @@ Set-ADComputer -Identity computername -Clear adminCount
 
 ---
 
+## ☁️ Azure Entra ID Vulnerabilities (v2.7.0+)
+
+Starting with v2.7.0, the AD Collector now supports **Azure AD/Entra ID security audits** via Microsoft Graph API integration. These are separate from the 87 on-premises AD vulnerabilities listed above.
+
+**Azure Audit Features:**
+- 20 SSE progress steps for real-time monitoring
+- Microsoft Graph API integration
+- Hybrid format compatible with existing AD audit frontends
+- Identity Protection support (requires Azure AD P2 license)
+- Conditional Access policy analysis
+
+### Azure Detection Categories
+
+#### 🔴 CRITICAL (4 types)
+
+**1. AZURE_GLOBAL_ADMIN_NO_MFA**
+- **Description:** Global Administrator account without Multi-Factor Authentication enabled
+- **Impact:** Critical privilege escalation risk if account is compromised
+- **Remediation:** Enable MFA for all Global Administrator accounts immediately
+
+**2. AZURE_GUEST_PRIVILEGED_ACCESS**
+- **Description:** External guest user assigned to privileged Azure AD roles
+- **Impact:** External users with administrative access pose security risk
+- **Remediation:** Remove privileged roles from guest accounts or convert to internal accounts
+
+**3. AZURE_NO_MFA_CA_POLICY**
+- **Description:** No Conditional Access policy enforcing MFA across the tenant
+- **Impact:** Users can authenticate without multi-factor authentication
+- **Remediation:** Create Conditional Access policy requiring MFA for all users
+
+**4. AZURE_RISKY_USER (High Risk)**
+- **Description:** User flagged as high risk by Azure AD Identity Protection
+- **Impact:** Account likely compromised based on Microsoft's threat intelligence
+- **Remediation:** Investigate risk detections and require secure password reset
+- **Requires:** Azure AD Premium P2 license
+
+---
+
+#### 🟠 HIGH (3 types)
+
+**5. AZURE_USER_INACTIVE**
+- **Description:** User account inactive for 90+ days
+- **Impact:** Orphaned accounts are attack targets
+- **Remediation:** Disable or delete inactive user accounts
+
+**6. AZURE_APP_CREDENTIAL_EXPIRED**
+- **Description:** Azure application registration with expired client secret or certificate
+- **Impact:** Application failures and potential security gaps
+- **Remediation:** Renew or remove expired credentials
+
+**7. AZURE_RISKY_USER (Medium Risk)**
+- **Description:** User flagged as medium risk by Identity Protection
+- **Impact:** Suspicious activity detected requiring review
+- **Remediation:** Review risk detections and consider requiring password change
+- **Requires:** Azure AD Premium P2 license
+
+---
+
+#### 🟡 MEDIUM (4 types)
+
+**8. AZURE_PASSWORD_OLD**
+- **Description:** User password not changed for 180+ days
+- **Impact:** Increased password compromise risk over time
+- **Remediation:** Enforce password rotation policies
+
+**9. AZURE_USER_NEVER_SIGNED_IN**
+- **Description:** Enabled user account that has never been used
+- **Impact:** Potential orphaned or provisioning error
+- **Remediation:** Review if account is needed, disable if unused
+
+**10. AZURE_APP_CREDENTIAL_EXPIRING**
+- **Description:** Application credential expiring within 30 days
+- **Impact:** Upcoming service disruption risk
+- **Remediation:** Plan credential renewal before expiration
+
+**11. AZURE_CA_POLICY_DISABLED**
+- **Description:** Conditional Access policy in disabled state
+- **Impact:** Security control not being enforced
+- **Remediation:** Enable policy or delete if no longer needed
+
+---
+
+#### 🔵 LOW (1 type)
+
+**12. AZURE_RISKY_USER (Low Risk)**
+- **Description:** User flagged as low risk by Identity Protection
+- **Impact:** Minor suspicious activity detected
+- **Remediation:** Monitor user activity
+- **Requires:** Azure AD Premium P2 license
+
+---
+
+### Azure Audit Endpoints
+
+**Check Azure Configuration:**
+```bash
+curl -X POST http://localhost:8443/api/audit/azure/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+**Run Azure Audit:**
+```bash
+curl -N -X POST http://localhost:8443/api/audit/azure/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Prerequisites
+
+**App Registration Required Permissions:**
+- `User.Read.All` - Read all user profiles (required)
+- `Directory.Read.All` - Read directory data (required)
+- `Group.Read.All` - Read all groups (required)
+- `Application.Read.All` - Read applications (required)
+- `Policy.Read.All` - Read Conditional Access policies (optional)
+- `IdentityRiskyUser.Read.All` - Read risky users (optional, requires Azure AD P2)
+
+**Environment Variables:**
+```bash
+AZURE_ENABLED=true
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-app-client-id
+AZURE_CLIENT_SECRET=your-client-secret
+```
+
+**Documentation:** See [AZURE_AUDIT_GUIDE.md](AZURE_AUDIT_GUIDE.md) for complete configuration guide.
+
+---
+
 ## Risk Scoring Methodology
 
 Security score calculation (0-100):
@@ -1467,7 +1599,16 @@ This vulnerability detection aligns with:
 
 ## Version History
 
-**Current Version:** v2.5.0
+**Current Version:** v2.7.0 ☁️
+- Azure AD/Entra ID audit support via Microsoft Graph API
+- 20 SSE progress steps for Azure audit with real-time streaming
+- 12 Azure-specific vulnerability types across 4 severity levels
+- Hybrid audit format compatible with existing AD audit frontends
+- Identity Protection integration (requires Azure AD P2)
+- Conditional Access policy analysis
+- On-premises AD: 87 vulnerabilities remain unchanged
+
+**v2.5.0:**
 - Added 16 computer-specific vulnerability detections (87 total vulnerabilities)
 - Enhanced computer security assessment with constrained delegation, RBCD, and privilege checks
 - Added computer password age, stale accounts, and LAPS deployment checks

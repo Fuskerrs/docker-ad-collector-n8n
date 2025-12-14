@@ -22,6 +22,7 @@ chmod +x install.sh
 The installer will guide you through configuration with prompts for:
 - Installation directory
 - Active Directory connection details (LDAP URL, Base DN, Bind credentials)
+- **Azure AD / Entra ID configuration (optional, v2.7.0+)**
 - Security settings
 - Port configuration
 
@@ -104,6 +105,10 @@ The script prompts for:
 | **TLS Verify** | `y/n` | Verify SSL certificates |
 | **Port** | `8443` | Collector listening port |
 | **Token Expiry** | `365d` | API token validity period |
+| **Azure AD Audit** *(optional)* | `y/n` | Enable Azure Entra ID audit (v2.7.0+) |
+| **Azure Tenant ID** | `12345678-1234-...` | Azure AD Tenant ID (if enabled) |
+| **Azure Client ID** | `87654321-4321-...` | App Registration Client ID (if enabled) |
+| **Azure Client Secret** | `your-secret-value` | App Registration Secret (if enabled) |
 
 ### 4. Installation
 
@@ -184,6 +189,116 @@ Removes the container, image, and optionally the installation directory.
 ```
 
 Displays usage information.
+
+### Update Installation
+
+```bash
+cd ~/ad-collector
+./install.sh --update
+```
+
+Updates the collector and optionally reconfigures settings (including Azure AD configuration added in v2.7.0).
+
+---
+
+## ☁️ Azure AD / Entra ID Configuration (v2.7.0+)
+
+Starting with v2.7.0, the installer supports optional **Azure AD (Entra ID) audit** configuration alongside on-premises Active Directory.
+
+### Prerequisites
+
+Before enabling Azure audit, you need to create an **App Registration** in Azure Portal:
+
+1. Go to [Azure Portal](https://portal.azure.com) → **Azure Active Directory** → **App registrations**
+2. Click **New registration**
+3. Name: `AD-Collector-Audit` (or any name)
+4. Supported account types: **Accounts in this organizational directory only**
+5. Click **Register**
+
+### Required API Permissions
+
+Grant the following **Application permissions** (not Delegated):
+
+**Required:**
+- `User.Read.All` - Read all user profiles
+- `Directory.Read.All` - Read directory data
+- `Group.Read.All` - Read all groups
+- `Application.Read.All` - Read applications
+
+**Optional (Enhanced features):**
+- `Policy.Read.All` - Read Conditional Access policies
+- `IdentityRiskyUser.Read.All` - Read risky users (requires Azure AD P2 license)
+
+After adding permissions, click **Grant admin consent**.
+
+### Create Client Secret
+
+1. In your App Registration, go to **Certificates & secrets**
+2. Click **New client secret**
+3. Add description: `AD Collector`
+4. Select expiration: **12-24 months recommended**
+5. Click **Add**
+6. **Copy the secret value immediately** (you won't see it again!)
+
+### Gather Required Information
+
+You'll need three values for installation:
+
+- **Tenant ID:** Found in App Registration overview (Directory/Tenant ID)
+- **Client ID:** Found in App Registration overview (Application/Client ID)
+- **Client Secret:** The secret value you just copied
+
+### During Installation
+
+The installer will prompt:
+
+```
+☁️  Azure AD / Entra ID Configuration (Optional)
+   Enable Azure cloud audit alongside on-premises AD audit
+
+   Configure Azure AD audit? (y/n) [n]: y
+
+   Azure Tenant ID: 12345678-1234-1234-1234-123456789012
+   Azure Client ID (App Registration): 87654321-4321-4321-4321-210987654321
+   Azure Client Secret: ********
+```
+
+If you skip Azure configuration during installation, you can add it later:
+
+```bash
+cd ~/ad-collector
+./install.sh --update
+# Answer 'y' to "Configure/Update Azure AD audit?"
+```
+
+Or manually edit `.env` and add:
+
+```bash
+AZURE_ENABLED=true
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-client-id
+AZURE_CLIENT_SECRET=your-client-secret
+```
+
+Then restart: `docker compose restart`
+
+### Azure Audit Features
+
+With Azure configured, you get:
+
+- **20 SSE audit steps** for real-time progress monitoring
+- **12 Azure-specific vulnerability types** (Critical, High, Medium, Low)
+- **Identity Protection** - Risky users and sign-ins (requires Azure AD P2)
+- **Conditional Access** - Policy analysis and recommendations
+- **Hybrid audits** - Audit both on-premises AD and cloud Azure AD from single collector
+
+**API Endpoints:**
+- `POST /api/audit/azure/status` - Check if Azure is configured
+- `POST /api/audit/azure/stream` - Run Azure audit with SSE streaming
+
+**Documentation:** See [AZURE_AUDIT_GUIDE.md](https://github.com/Fuskerrs/docker-ad-collector-n8n/blob/main/AZURE_AUDIT_GUIDE.md) for complete guide.
+
+---
 
 ## 📊 Example Installation Flow
 

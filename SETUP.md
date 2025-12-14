@@ -1,8 +1,8 @@
 # AD Collector for n8n - Setup Guide
 
-## Version 1.0.0
+## Version 2.7.0
 
-Complete installation and configuration guide for AD Collector.
+Complete installation and configuration guide for AD Collector with Azure AD/Entra ID support.
 
 ---
 
@@ -12,11 +12,12 @@ Complete installation and configuration guide for AD Collector.
 2. [Prerequisites](#prerequisites)
 3. [Installation Methods](#installation-methods)
 4. [Configuration](#configuration)
-5. [Active Directory Certificate Setup](#active-directory-certificate-setup)
-6. [n8n Configuration](#n8n-configuration)
-7. [Testing](#testing)
-8. [Troubleshooting](#troubleshooting)
-9. [Security Best Practices](#security-best-practices)
+5. [Azure AD / Entra ID Configuration](#azure-ad--entra-id-configuration)
+6. [Active Directory Certificate Setup](#active-directory-certificate-setup)
+7. [n8n Configuration](#n8n-configuration)
+8. [Testing](#testing)
+9. [Troubleshooting](#troubleshooting)
+10. [Security Best Practices](#security-best-practices)
 
 ---
 
@@ -41,7 +42,7 @@ docker run -d \
   --env-file .env \
   -p 8443:8443 \
   --restart unless-stopped \
-  fuskerrs97/ad-collector-n8n:1.0
+  fuskerrs97/ad-collector-n8n:latest
 
 # 4. Check the API token
 docker logs ad-collector | grep "API Token"
@@ -178,7 +179,7 @@ You should see:
 
 ```
 ========================================
-AD Collector for n8n - v1.0.0
+AD Collector for n8n - v2.7.0
 ========================================
 Configuration:
   LDAP URL: ldaps://dc01.company.local:636
@@ -193,6 +194,109 @@ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 **IMPORTANT:** Save the API Token displayed in the logs - you'll need it for n8n!
+
+---
+
+## Azure AD / Entra ID Configuration
+
+**New in v2.7.0:** The AD Collector now supports Azure AD (Entra ID) audit alongside on-premises Active Directory audit.
+
+### Prerequisites
+
+You need an **Azure App Registration** with the following permissions:
+
+**Required Application Permissions:**
+- `User.Read.All` - Read all user profiles
+- `Directory.Read.All` - Read directory data
+- `Group.Read.All` - Read all groups
+- `Application.Read.All` - Read applications
+
+**Optional Permissions (Enhanced Features):**
+- `Policy.Read.All` - Read Conditional Access policies
+- `IdentityRiskyUser.Read.All` - Read risky users (requires Azure AD P2 license)
+
+### Setup Steps
+
+#### 1. Create App Registration
+
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Navigate to **Azure Active Directory** → **App registrations** → **New registration**
+3. Name: `AD-Collector-Audit`
+4. Supported account types: **Accounts in this organizational directory only**
+5. Click **Register**
+
+#### 2. Grant API Permissions
+
+1. In your App Registration, go to **API permissions**
+2. Click **Add a permission** → **Microsoft Graph** → **Application permissions**
+3. Add the required permissions listed above
+4. Click **Grant admin consent for [Your Organization]** (requires Global Administrator)
+
+#### 3. Create Client Secret
+
+1. Go to **Certificates & secrets** → **New client secret**
+2. Description: `AD Collector`
+3. Expires: **12-24 months** (recommended)
+4. Click **Add**
+5. **Copy the secret value immediately** - you won't see it again!
+
+#### 4. Gather Required Information
+
+From your App Registration overview page, copy:
+- **Directory (tenant) ID**
+- **Application (client) ID**
+- **Client secret value** (from step 3)
+
+#### 5. Add to .env Configuration
+
+Edit your `.env` file and add:
+
+```env
+# Azure AD / Entra ID Configuration (v2.7.0+)
+AZURE_ENABLED=true
+AZURE_TENANT_ID=12345678-1234-1234-1234-123456789012
+AZURE_CLIENT_ID=87654321-4321-4321-4321-210987654321
+AZURE_CLIENT_SECRET=your-secret-value-here
+```
+
+#### 6. Restart the Collector
+
+```bash
+docker restart ad-collector
+# OR with docker compose
+docker compose restart
+```
+
+### Azure Audit Features
+
+Once configured, you can:
+
+**Check Azure Status:**
+```bash
+TOKEN="your-api-token"
+
+curl -X POST http://localhost:8443/api/audit/azure/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Run Azure Audit:**
+```bash
+curl -N -X POST http://localhost:8443/api/audit/azure/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**What You Get:**
+- ☁️ **20 SSE audit steps** - Real-time progress monitoring
+- 🔍 **12 Azure-specific vulnerability types** - Critical, High, Medium, Low
+- 🔐 **Identity Protection** - Risky users and sign-ins (requires Azure AD P2)
+- 📋 **Conditional Access** - Policy analysis and recommendations
+- 🌐 **Hybrid audits** - Audit both on-premises AD and cloud Azure AD from single collector
+
+**Complete Documentation:** See [AZURE_AUDIT_GUIDE.md](https://github.com/Fuskerrs/docker-ad-collector-n8n/blob/main/AZURE_AUDIT_GUIDE.md)
 
 ---
 
