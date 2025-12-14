@@ -953,10 +953,20 @@ EOF
     chmod 777 ./token-data
 
     # Copy install script to collector directory for easy management
+    # Try to copy from current location first, otherwise download from GitHub
     if [ -f "$0" ] && [ "$(cd "$(dirname "$0")" && pwd)" != "$INSTALL_DIR" ]; then
         cp "$0" ./install.sh
         chmod +x ./install.sh
         print_success "Install script copied to $INSTALL_DIR/install.sh"
+    elif [ ! -f "./install.sh" ]; then
+        # Script was piped (curl | bash) or not found, download from GitHub
+        print_step "Downloading install script from GitHub..."
+        if curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh -o ./install.sh; then
+            chmod +x ./install.sh
+            print_success "Install script downloaded to $INSTALL_DIR/install.sh"
+        else
+            print_warning "Failed to download install script (update/reset commands may not work)"
+        fi
     fi
 
     print_success "Project created at $INSTALL_DIR"
