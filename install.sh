@@ -662,6 +662,37 @@ get_user_input() {
         *) ENDPOINT_MODE="full" ;;
     esac
     echo ""
+
+    # Azure Entra ID configuration (v2.7.0)
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}☁️  Azure AD / Entra ID Configuration (Optional)${NC}"
+    echo -e "${CYAN}   Enable Azure cloud audit alongside on-premises AD audit${NC}"
+    echo ""
+    read -p "   Configure Azure AD audit? (y/n) [n]: " -n 1 -r
+    echo ""
+    echo ""
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        CONFIGURE_AZURE="true"
+        echo -e "${GREEN}✓ Azure audit enabled${NC}"
+        echo ""
+        echo -e "${BOLD}Azure App Registration Required:${NC}"
+        echo -e "   1. Go to Azure Portal → App registrations → New registration"
+        echo -e "   2. Grant API permissions: User.Read.All, Directory.Read.All, etc."
+        echo -e "   3. Create a client secret"
+        echo ""
+
+        read -p "   Azure Tenant ID: " AZURE_TENANT_ID
+        read -p "   Azure Client ID (App Registration): " AZURE_CLIENT_ID
+        read -s -p "   Azure Client Secret: " AZURE_CLIENT_SECRET
+        echo ""
+        echo ""
+        print_success "Azure configuration captured"
+    else
+        CONFIGURE_AZURE="false"
+        print_info "Azure audit disabled (can be configured later)"
+    fi
+    echo ""
 }
 
 show_configuration_summary() {
@@ -682,6 +713,14 @@ show_configuration_summary() {
     echo -e "  Token Expiry:   $TOKEN_EXPIRY"
     echo -e "  Token Max Uses: $TOKEN_MAX_USES"
     echo -e "  Endpoint Mode:  $ENDPOINT_MODE"
+    echo ""
+    echo -e "${BOLD}Azure AD / Entra ID:${NC}"
+    if [ "$CONFIGURE_AZURE" = "true" ]; then
+        echo -e "  Azure Enabled:  ${GREEN}Yes${NC}"
+        echo -e "  Tenant ID:      $AZURE_TENANT_ID"
+    else
+        echo -e "  Azure Enabled:  ${YELLOW}No${NC}"
+    fi
     echo ""
 
     read -p "Proceed with installation? (y/n): " -n 1 -r
@@ -850,6 +889,32 @@ ENDPOINT_MODE=$ENDPOINT_MODE
 
 # Read-only mode (DEPRECATED - use ENDPOINT_MODE=audit-only instead)
 # READ_ONLY_MODE=false
+
+# ============================================================================
+# Azure AD / Entra ID Configuration (v2.7.0)
+# ============================================================================
+# Enable Azure audit alongside on-premises AD audit
+# Requires App Registration in Azure Portal with appropriate permissions
+EOF
+
+    # Add Azure configuration if enabled
+    if [ "$CONFIGURE_AZURE" = "true" ]; then
+        cat >> .env <<EOF
+AZURE_ENABLED=true
+AZURE_TENANT_ID=$AZURE_TENANT_ID
+AZURE_CLIENT_ID=$AZURE_CLIENT_ID
+AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET
+EOF
+    else
+        cat >> .env <<EOF
+AZURE_ENABLED=false
+# AZURE_TENANT_ID=
+# AZURE_CLIENT_ID=
+# AZURE_CLIENT_SECRET=
+EOF
+    fi
+
+    cat >> .env <<'EOF'
 
 # ============================================================================
 # Notes:
