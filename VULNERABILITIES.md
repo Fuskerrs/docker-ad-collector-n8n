@@ -1,10 +1,49 @@
-# Active Directory Security Vulnerabilities Detection
+# Security Vulnerabilities Detection - AD Collector
 
-## Overview
+## 📋 Global Overview
 
-The AD Collector currently detects **87 vulnerability types** across 4 severity levels, providing comprehensive Active Directory security assessment.
+The AD Collector provides comprehensive security auditing for both **on-premises Active Directory** and **cloud Azure AD/Entra ID** environments.
 
-**Statistics:**
+### 🔍 Detection Capabilities
+
+| Platform | Vulnerabilities | SSE Steps | Severity Levels |
+|----------|----------------|-----------|-----------------|
+| **On-Premises AD** | **87 types** | 74 steps | Critical (16), High (27), Medium (38), Low (6) |
+| **Azure AD / Entra ID** | **12 types** | 20 steps | Critical (4), High (3), Medium (4), Low (1) |
+| **Total Coverage** | **99 types** | 94 steps | Hybrid cloud + on-prem security |
+
+### 📖 Documentation Sections
+
+**On-Premises Active Directory:**
+- [AD Overview & Statistics](#on-premises-active-directory-overview) - Vulnerability counts and evolution
+- [AD SSE Audit Steps](#ad-sse-audit-steps) - 74 real-time progress steps
+- [AD Vulnerability List](#ad-complete-vulnerability-detection-list) - Complete table with SSE mapping
+- [AD Critical Vulnerabilities](#-critical---critical-vulnerabilities-16) - Detailed descriptions (16 types)
+- [AD High Vulnerabilities](#-high---high-severity-vulnerabilities-27) - Detailed descriptions (27 types)
+- [AD Medium Vulnerabilities](#-medium---medium-severity-vulnerabilities-38) - Detailed descriptions (38 types)
+- [AD Low Vulnerabilities](#-low---low-severity-vulnerabilities-6) - Detailed descriptions (6 types)
+
+**Azure AD / Entra ID:**
+- [Azure Overview & Statistics](#azure-entra-id-overview) - Vulnerability counts and capabilities
+- [Azure SSE Audit Steps](#azure-sse-audit-steps) - 20 real-time progress steps
+- [Azure Vulnerability List](#azure-complete-vulnerability-detection-list) - Complete table with SSE mapping
+- [Azure Critical Vulnerabilities](#azure-critical---critical-vulnerabilities-4) - Detailed descriptions (4 types)
+- [Azure High Vulnerabilities](#azure-high---high-severity-vulnerabilities-3) - Detailed descriptions (3 types)
+- [Azure Medium Vulnerabilities](#azure-medium---medium-severity-vulnerabilities-4) - Detailed descriptions (4 types)
+- [Azure Low Vulnerabilities](#azure-low---low-severity-vulnerabilities-1) - Detailed descriptions (1 type)
+
+**General:**
+- [Risk Scoring Methodology](#risk-scoring-methodology) - How security scores are calculated
+- [Compliance Mapping](#compliance-mapping) - ISO 27001, NIST, MITRE ATT&CK, CIS Controls
+- [Version History](#version-history) - Evolution and changelog
+
+---
+
+## On-Premises Active Directory Overview
+
+The AD Collector detects **87 vulnerability types** across 4 severity levels for on-premises Active Directory environments.
+
+**AD Statistics:**
 - 🔴 **Critical**: 16 vulnerabilities
 - 🟠 **High**: 27 vulnerabilities
 - 🟡 **Medium**: 38 vulnerabilities
@@ -25,9 +64,9 @@ The AD Collector currently detects **87 vulnerability types** across 4 severity 
 
 ---
 
-## SSE Audit Steps
+## AD SSE Audit Steps
 
-The audit process includes **74 SSE (Server-Sent Events) steps** that provide real-time progress tracking:
+The on-premises AD audit process includes **74 SSE (Server-Sent Events) steps** that provide real-time progress tracking:
 
 **Process Steps (11):** Infrastructure and enumeration steps that don't detect specific vulnerabilities
 - `STEP_01_INIT` - Audit initialization
@@ -48,7 +87,7 @@ The audit process includes **74 SSE (Server-Sent Events) steps** that provide re
 
 ---
 
-## Complete Vulnerability Detection List
+## AD Complete Vulnerability Detection List
 
 | # | Vulnerability Name | Brief Description | SSE Step | Detected |
 |---|-------------------|-------------------|----------|----------|
@@ -1422,134 +1461,431 @@ Set-ADComputer -Identity computername -Clear adminCount
 
 ---
 
-## ☁️ Azure Entra ID Vulnerabilities (v2.7.0+)
+## Azure Entra ID Overview
 
-Starting with v2.7.0, the AD Collector now supports **Azure AD/Entra ID security audits** via Microsoft Graph API integration. These are separate from the 87 on-premises AD vulnerabilities listed above.
+The AD Collector v2.7.0+ detects **12 vulnerability types** across 4 severity levels for Azure AD/Entra ID cloud environments via Microsoft Graph API integration.
+
+**Azure Statistics:**
+- 🔴 **Critical**: 4 vulnerabilities
+- 🟠 **High**: 3 vulnerabilities
+- 🟡 **Medium**: 4 vulnerabilities
+- 🔵 **Low**: 1 vulnerability
 
 **Azure Audit Features:**
-- 20 SSE progress steps for real-time monitoring
-- Microsoft Graph API integration
-- Hybrid format compatible with existing AD audit frontends
-- Identity Protection support (requires Azure AD P2 license)
-- Conditional Access policy analysis
+- ☁️ Microsoft Graph API integration
+- 🔄 20 SSE progress steps for real-time monitoring
+- 🔐 Identity Protection support (requires Azure AD P2 license)
+- 📋 Conditional Access policy analysis
+- 🌐 Hybrid format compatible with existing AD audit frontends
+- 👥 User, Group, Application, Service Principal analysis
+- 🎯 Privileged role and guest access detection
 
-### Azure Detection Categories
-
-#### 🔴 CRITICAL (4 types)
-
-**1. AZURE_GLOBAL_ADMIN_NO_MFA**
-- **Description:** Global Administrator account without Multi-Factor Authentication enabled
-- **Impact:** Critical privilege escalation risk if account is compromised
-- **Remediation:** Enable MFA for all Global Administrator accounts immediately
-
-**2. AZURE_GUEST_PRIVILEGED_ACCESS**
-- **Description:** External guest user assigned to privileged Azure AD roles
-- **Impact:** External users with administrative access pose security risk
-- **Remediation:** Remove privileged roles from guest accounts or convert to internal accounts
-
-**3. AZURE_NO_MFA_CA_POLICY**
-- **Description:** No Conditional Access policy enforcing MFA across the tenant
-- **Impact:** Users can authenticate without multi-factor authentication
-- **Remediation:** Create Conditional Access policy requiring MFA for all users
-
-**4. AZURE_RISKY_USER (High Risk)**
-- **Description:** User flagged as high risk by Azure AD Identity Protection
-- **Impact:** Account likely compromised based on Microsoft's threat intelligence
-- **Remediation:** Investigate risk detections and require secure password reset
-- **Requires:** Azure AD Premium P2 license
+**Evolution:**
+- **v2.7.0** (December 2025): Initial Azure AD/Entra ID audit support with 12 vulnerability types
 
 ---
 
-#### 🟠 HIGH (3 types)
+## Azure SSE Audit Steps
 
-**5. AZURE_USER_INACTIVE**
-- **Description:** User account inactive for 90+ days
-- **Impact:** Orphaned accounts are attack targets
-- **Remediation:** Disable or delete inactive user accounts
+The Azure audit process includes **20 SSE (Server-Sent Events) steps** that provide real-time progress tracking:
 
-**6. AZURE_APP_CREDENTIAL_EXPIRED**
-- **Description:** Azure application registration with expired client secret or certificate
-- **Impact:** Application failures and potential security gaps
-- **Remediation:** Renew or remove expired credentials
+**Process Steps (20):** All Azure audit steps perform data collection and vulnerability detection
 
-**7. AZURE_RISKY_USER (Medium Risk)**
-- **Description:** User flagged as medium risk by Identity Protection
-- **Impact:** Suspicious activity detected requiring review
-- **Remediation:** Review risk detections and consider requiring password change
-- **Requires:** Azure AD Premium P2 license
-
----
-
-#### 🟡 MEDIUM (4 types)
-
-**8. AZURE_PASSWORD_OLD**
-- **Description:** User password not changed for 180+ days
-- **Impact:** Increased password compromise risk over time
-- **Remediation:** Enforce password rotation policies
-
-**9. AZURE_USER_NEVER_SIGNED_IN**
-- **Description:** Enabled user account that has never been used
-- **Impact:** Potential orphaned or provisioning error
-- **Remediation:** Review if account is needed, disable if unused
-
-**10. AZURE_APP_CREDENTIAL_EXPIRING**
-- **Description:** Application credential expiring within 30 days
-- **Impact:** Upcoming service disruption risk
-- **Remediation:** Plan credential renewal before expiration
-
-**11. AZURE_CA_POLICY_DISABLED**
-- **Description:** Conditional Access policy in disabled state
-- **Impact:** Security control not being enforced
-- **Remediation:** Enable policy or delete if no longer needed
+| Step | Name | Description |
+|------|------|-------------|
+| `AZURE_STEP_01_INIT` | Initialization | Initializing Azure audit |
+| `AZURE_STEP_02_AUTH` | Authentication | Authenticating to Microsoft Graph API |
+| `AZURE_STEP_03_ORG_INFO` | Organization Info | Fetching organization information |
+| `AZURE_STEP_04_USERS` | User Enumeration | Fetching all users |
+| `AZURE_STEP_05_GROUPS` | Group Enumeration | Fetching all groups |
+| `AZURE_STEP_06_ROLES` | Directory Roles | Fetching directory roles |
+| `AZURE_STEP_07_APPS` | Applications | Fetching applications |
+| `AZURE_STEP_08_SPS` | Service Principals | Fetching service principals |
+| `AZURE_STEP_09_CA_POLICIES` | Conditional Access | Fetching Conditional Access policies |
+| `AZURE_STEP_10_RISKY_USERS` | Identity Protection | Fetching risky users (requires Azure AD P2) |
+| `AZURE_STEP_11_USER_MFA` | MFA Status | Checking user MFA status |
+| `AZURE_STEP_12_INACTIVE_USERS` | Inactive Users | Detecting inactive users (90+ days) |
+| `AZURE_STEP_13_GUEST_ACCESS` | Guest Analysis | Analyzing guest user access |
+| `AZURE_STEP_14_PASSWORD_AGE` | Password Age | Checking password age (180+ days) |
+| `AZURE_STEP_15_PRIVILEGED` | Privileged Roles | Analyzing privileged roles |
+| `AZURE_STEP_16_APP_CREDS` | App Credentials | Checking application credentials |
+| `AZURE_STEP_17_CA_ANALYSIS` | CA Policy Analysis | Analyzing Conditional Access policies |
+| `AZURE_STEP_18_RISK_ANALYSIS` | Risk Processing | Processing Identity Protection risks |
+| `AZURE_STEP_19_SCORING` | Security Score | Calculating security score |
+| `AZURE_STEP_20_COMPLETE` | Completion | Azure audit complete |
 
 ---
 
-#### 🔵 LOW (1 type)
+## Azure Complete Vulnerability Detection List
 
-**12. AZURE_RISKY_USER (Low Risk)**
-- **Description:** User flagged as low risk by Identity Protection
-- **Impact:** Minor suspicious activity detected
-- **Remediation:** Monitor user activity
-- **Requires:** Azure AD Premium P2 license
+| # | Vulnerability Name | Brief Description | SSE Step | Detected |
+|---|-------------------|-------------------|----------|----------|
+| 1 | AZURE_GLOBAL_ADMIN_NO_MFA | Global Administrator without MFA | AZURE_STEP_11_USER_MFA | ✅ |
+| 2 | AZURE_GUEST_PRIVILEGED_ACCESS | Guest user with privileged role | AZURE_STEP_13_GUEST_ACCESS | ✅ |
+| 3 | AZURE_NO_MFA_CA_POLICY | No MFA enforcement via Conditional Access | AZURE_STEP_17_CA_ANALYSIS | ✅ |
+| 4 | AZURE_RISKY_USER (High) | User flagged as high risk by Identity Protection | AZURE_STEP_10_RISKY_USERS | ✅ |
+| 5 | AZURE_USER_INACTIVE | User inactive for 90+ days | AZURE_STEP_12_INACTIVE_USERS | ✅ |
+| 6 | AZURE_APP_CREDENTIAL_EXPIRED | Application credential expired | AZURE_STEP_16_APP_CREDS | ✅ |
+| 7 | AZURE_RISKY_USER (Medium) | User flagged as medium risk | AZURE_STEP_10_RISKY_USERS | ✅ |
+| 8 | AZURE_PASSWORD_OLD | Password not changed for 180+ days | AZURE_STEP_14_PASSWORD_AGE | ✅ |
+| 9 | AZURE_USER_NEVER_SIGNED_IN | Enabled account never used | AZURE_STEP_04_USERS | ✅ |
+| 10 | AZURE_APP_CREDENTIAL_EXPIRING | Credential expiring within 30 days | AZURE_STEP_16_APP_CREDS | ✅ |
+| 11 | AZURE_CA_POLICY_DISABLED | Conditional Access policy disabled | AZURE_STEP_17_CA_ANALYSIS | ✅ |
+| 12 | AZURE_RISKY_USER (Low) | User flagged as low risk | AZURE_STEP_10_RISKY_USERS | ✅ |
 
 ---
 
-### Azure Audit Endpoints
+## Azure CRITICAL - Critical Vulnerabilities (4)
 
-**Check Azure Configuration:**
-```bash
-curl -X POST http://localhost:8443/api/audit/azure/status \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json"
+### 1. AZURE_GLOBAL_ADMIN_NO_MFA
+**Description:** Global Administrator account without Multi-Factor Authentication (MFA) enabled
+
+**Impact:** Critical privilege escalation risk if account credentials are compromised. Global Administrators have full control over all aspects of Azure AD and Azure resources.
+
+**Detection:** User has Global Administrator role assignment AND MFA is not enabled on the account
+
+**Reference:** [Azure AD Security Best Practices](https://learn.microsoft.com/en-us/azure/active-directory/roles/best-practices)
+
+**Remediation:**
+```powershell
+# Enable MFA for the user via Azure Portal:
+# 1. Go to Azure AD → Users → Select user
+# 2. Click "Per-user MFA" or configure via Conditional Access policy
+# 3. Require MFA for the user
+
+# OR use Conditional Access policy (recommended):
+# Azure AD → Security → Conditional Access → New policy
+# Target: Global Administrators role
+# Grant: Require multi-factor authentication
 ```
 
-**Run Azure Audit:**
-```bash
-curl -N -X POST http://localhost:8443/api/audit/azure/stream \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}'
+---
+
+### 2. AZURE_GUEST_PRIVILEGED_ACCESS
+**Description:** External guest user assigned to privileged Azure AD roles
+
+**Impact:** External users from other organizations having administrative access increases the attack surface and poses significant security risks
+
+**Detection:** User type is "Guest" AND assigned to privileged directory roles (Global Administrator, Privileged Role Administrator, etc.)
+
+**Reference:** [Azure AD B2B Collaboration Security](https://learn.microsoft.com/en-us/azure/active-directory/external-identities/what-is-b2b)
+
+**Remediation:**
+```powershell
+# List guest users with privileged roles:
+Connect-MgGraph -Scopes "Directory.Read.All"
+Get-MgUser -Filter "userType eq 'Guest'" -ExpandProperty memberOf
+
+# Remove privileged role from guest:
+# Azure AD → Users → Select guest user → Assigned roles → Remove role
+
+# OR convert to internal user if appropriate:
+# Azure AD → Users → Select user → Properties → Convert to member
 ```
 
-### Prerequisites
+---
 
-**App Registration Required Permissions:**
-- `User.Read.All` - Read all user profiles (required)
-- `Directory.Read.All` - Read directory data (required)
-- `Group.Read.All` - Read all groups (required)
-- `Application.Read.All` - Read applications (required)
-- `Policy.Read.All` - Read Conditional Access policies (optional)
-- `IdentityRiskyUser.Read.All` - Read risky users (optional, requires Azure AD P2)
+### 3. AZURE_NO_MFA_CA_POLICY
+**Description:** No Conditional Access policy enforcing Multi-Factor Authentication across the tenant
 
-**Environment Variables:**
-```bash
-AZURE_ENABLED=true
-AZURE_TENANT_ID=your-tenant-id
-AZURE_CLIENT_ID=your-app-client-id
-AZURE_CLIENT_SECRET=your-client-secret
+**Impact:** Without MFA enforcement, users can authenticate with just username and password, making accounts vulnerable to credential theft, phishing, and brute force attacks
+
+**Detection:** No Conditional Access policies found that require MFA for all users or all cloud apps
+
+**Reference:** [Conditional Access MFA Policies](https://learn.microsoft.com/en-us/azure/active-directory/conditional-access/howto-conditional-access-policy-all-users-mfa)
+
+**Remediation:**
+```powershell
+# Create Conditional Access policy requiring MFA:
+# 1. Azure AD → Security → Conditional Access → New policy
+# 2. Name: "Require MFA for all users"
+# 3. Assignments:
+#    - Users: All users (exclude break-glass accounts)
+#    - Cloud apps: All cloud apps
+# 4. Access controls:
+#    - Grant: Require multi-factor authentication
+# 5. Enable policy: On
+
+# PowerShell example:
+Connect-MgGraph -Scopes "Policy.ReadWrite.ConditionalAccess"
+$params = @{
+    displayName = "Require MFA for all users"
+    state = "enabled"
+    conditions = @{
+        users = @{
+            includeUsers = @("All")
+        }
+        applications = @{
+            includeApplications = @("All")
+        }
+    }
+    grantControls = @{
+        operator = "OR"
+        builtInControls = @("mfa")
+    }
+}
+New-MgIdentityConditionalAccessPolicy -BodyParameter $params
 ```
 
-**Documentation:** See [AZURE_AUDIT_GUIDE.md](AZURE_AUDIT_GUIDE.md) for complete configuration guide.
+---
+
+### 4. AZURE_RISKY_USER (High Risk)
+**Description:** User flagged as high risk by Azure AD Identity Protection based on Microsoft's threat intelligence
+
+**Impact:** Account likely compromised. High-risk detections indicate strong evidence of account takeover, credential leaks, or malicious activity
+
+**Detection:** Azure AD Identity Protection identifies user as "High" risk level
+
+**Reference:** [Azure AD Identity Protection](https://learn.microsoft.com/en-us/azure/active-directory/identity-protection/overview-identity-protection)
+
+**Requires:** Azure AD Premium P2 license
+
+**Remediation:**
+```powershell
+# 1. Investigate risk detections:
+# Azure AD → Security → Identity Protection → Risky users → Select user → View risk detections
+
+# 2. Confirm compromise and remediate:
+Connect-MgGraph -Scopes "IdentityRiskyUser.ReadWrite.All"
+
+# Confirm user is compromised:
+Confirm-MgRiskyUserCompromised -RiskyUserId <user-id>
+
+# 3. Force password reset:
+# Azure AD → Users → Select user → Reset password
+# Enable "Require user to change password on next sign-in"
+
+# 4. Revoke all sessions:
+Revoke-MgUserSignInSession -UserId <user-id>
+
+# 5. Dismiss risk (after remediation):
+Dismiss-MgRiskyUser -RiskyUserId <user-id>
+```
+
+---
+
+## Azure HIGH - High Severity Vulnerabilities (3)
+
+### 5. AZURE_USER_INACTIVE
+**Description:** User account inactive for 90+ days (no sign-in activity)
+
+**Impact:** Orphaned accounts are prime targets for attackers. Inactive accounts may have forgotten passwords, outdated security settings, or be overlooked during security reviews
+
+**Detection:** User's `lastSignInDateTime` > 90 days ago
+
+**Remediation:**
+```powershell
+# List inactive users:
+Connect-MgGraph -Scopes "AuditLog.Read.All", "User.ReadWrite.All"
+$inactiveDate = (Get-Date).AddDays(-90)
+Get-MgUser -All -Property signInActivity,userPrincipalName,accountEnabled |
+  Where-Object {$_.SignInActivity.LastSignInDateTime -lt $inactiveDate}
+
+# Disable inactive account:
+Update-MgUser -UserId <user-id> -AccountEnabled:$false
+
+# OR delete after verification:
+Remove-MgUser -UserId <user-id>
+```
+
+---
+
+### 6. AZURE_APP_CREDENTIAL_EXPIRED
+**Description:** Azure application registration with expired client secret or certificate credential
+
+**Impact:** Application authentication failures, service disruptions. Expired credentials indicate poor credential lifecycle management and potential security gaps
+
+**Detection:** Application has client secret or certificate with `endDateTime` in the past
+
+**Remediation:**
+```powershell
+# List apps with expired credentials:
+Connect-MgGraph -Scopes "Application.Read.All"
+$apps = Get-MgApplication -All
+foreach ($app in $apps) {
+    $expiredCreds = $app.PasswordCredentials | Where-Object {$_.EndDateTime -lt (Get-Date)}
+    if ($expiredCreds) {
+        Write-Host "App: $($app.DisplayName) has expired credentials"
+    }
+}
+
+# Remove expired credential:
+Connect-MgGraph -Scopes "Application.ReadWrite.All"
+Remove-MgApplicationPassword -ApplicationId <app-id> -KeyId <credential-key-id>
+
+# Add new credential:
+$passwordCred = @{
+    displayName = "New secret"
+    endDateTime = (Get-Date).AddMonths(12)
+}
+Add-MgApplicationPassword -ApplicationId <app-id> -PasswordCredential $passwordCred
+```
+
+---
+
+### 7. AZURE_RISKY_USER (Medium Risk)
+**Description:** User flagged as medium risk by Azure AD Identity Protection
+
+**Impact:** Suspicious activity detected that requires investigation. Medium-risk detections indicate potential security issues that need review
+
+**Detection:** Azure AD Identity Protection identifies user as "Medium" risk level
+
+**Reference:** [Risk Detections Types](https://learn.microsoft.com/en-us/azure/active-directory/identity-protection/concept-identity-protection-risks)
+
+**Requires:** Azure AD Premium P2 license
+
+**Remediation:**
+```powershell
+# Investigate risk detections:
+Connect-MgGraph -Scopes "IdentityRiskyUser.Read.All"
+Get-MgRiskyUser -RiskyUserId <user-id> | Select-Object -ExpandProperty RiskDetail
+
+# Review risk events:
+# Azure AD → Security → Identity Protection → Risk detections
+
+# Require password change (if appropriate):
+# Azure AD → Users → Select user → Reset password
+# Enable "Require user to change password on next sign-in"
+
+# Dismiss risk (if false positive):
+Dismiss-MgRiskyUser -RiskyUserId <user-id>
+```
+
+---
+
+## Azure MEDIUM - Medium Severity Vulnerabilities (4)
+
+### 8. AZURE_PASSWORD_OLD
+**Description:** User password not changed for 180+ days
+
+**Impact:** Long-lived passwords increase the risk of credential compromise over time. Passwords may have been exposed in breaches or shared
+
+**Detection:** User's `lastPasswordChangeDateTime` > 180 days ago
+
+**Remediation:**
+```powershell
+# Require password change at next sign-in:
+Connect-MgGraph -Scopes "User.ReadWrite.All"
+Update-MgUser -UserId <user-id> -PasswordPolicies "DisableStrongPassword" -PasswordProfile @{
+    forceChangePasswordNextSignIn = $true
+}
+
+# Configure password expiration policy:
+# Azure AD → Users → Password reset → Properties
+# Set "Password expiration days" to 90 or less
+```
+
+---
+
+### 9. AZURE_USER_NEVER_SIGNED_IN
+**Description:** Enabled user account that has never been used (no sign-in history)
+
+**Impact:** Potential orphaned account from incomplete provisioning or forgotten test account. May indicate provisioning errors or unused licenses
+
+**Detection:** User account enabled AND `signInActivity` is null or empty
+
+**Remediation:**
+```powershell
+# List users who never signed in:
+Connect-MgGraph -Scopes "AuditLog.Read.All", "User.Read.All"
+Get-MgUser -All -Property signInActivity,userPrincipalName,accountEnabled,createdDateTime |
+  Where-Object {$_.AccountEnabled -and -not $_.SignInActivity.LastSignInDateTime}
+
+# Disable the account:
+Update-MgUser -UserId <user-id> -AccountEnabled:$false
+
+# OR delete if confirmed unnecessary:
+Remove-MgUser -UserId <user-id>
+```
+
+---
+
+### 10. AZURE_APP_CREDENTIAL_EXPIRING
+**Description:** Application credential (client secret or certificate) expiring within 30 days
+
+**Impact:** Upcoming service disruption risk. Applications will fail to authenticate once credentials expire
+
+**Detection:** Application has credential with `endDateTime` within 30 days
+
+**Remediation:**
+```powershell
+# List apps with expiring credentials:
+Connect-MgGraph -Scopes "Application.Read.All"
+$expiryThreshold = (Get-Date).AddDays(30)
+$apps = Get-MgApplication -All
+foreach ($app in $apps) {
+    $expiringCreds = $app.PasswordCredentials |
+        Where-Object {$_.EndDateTime -lt $expiryThreshold -and $_.EndDateTime -gt (Get-Date)}
+    if ($expiringCreds) {
+        Write-Host "App: $($app.DisplayName) - Credential expires: $($expiringCreds.EndDateTime)"
+    }
+}
+
+# Renew credential before expiration:
+Connect-MgGraph -Scopes "Application.ReadWrite.All"
+$newCred = @{
+    displayName = "Renewed secret"
+    endDateTime = (Get-Date).AddMonths(12)
+}
+Add-MgApplicationPassword -ApplicationId <app-id> -PasswordCredential $newCred
+
+# Update application configuration with new secret before removing old one
+```
+
+---
+
+### 11. AZURE_CA_POLICY_DISABLED
+**Description:** Conditional Access policy in disabled state
+
+**Impact:** Security control not being enforced. Disabled policies indicate incomplete security implementation or troubleshooting leftovers
+
+**Detection:** Conditional Access policy exists with `state` = "disabled"
+
+**Remediation:**
+```powershell
+# List disabled Conditional Access policies:
+Connect-MgGraph -Scopes "Policy.Read.All"
+Get-MgIdentityConditionalAccessPolicy -All |
+  Where-Object {$_.State -eq "disabled"} |
+  Select-Object DisplayName, Id, State
+
+# Enable policy:
+Connect-MgGraph -Scopes "Policy.ReadWrite.ConditionalAccess"
+Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId <policy-id> -State "enabled"
+
+# OR delete if no longer needed:
+Remove-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId <policy-id>
+```
+
+---
+
+## Azure LOW - Low Severity Vulnerabilities (1)
+
+### 12. AZURE_RISKY_USER (Low Risk)
+**Description:** User flagged as low risk by Azure AD Identity Protection
+
+**Impact:** Minor suspicious activity detected. Low-risk detections may be false positives but should be monitored
+
+**Detection:** Azure AD Identity Protection identifies user as "Low" risk level
+
+**Reference:** [Identity Protection Risk Levels](https://learn.microsoft.com/en-us/azure/active-directory/identity-protection/concept-identity-protection-risks)
+
+**Requires:** Azure AD Premium P2 license
+
+**Remediation:**
+```powershell
+# Monitor user activity:
+Connect-MgGraph -Scopes "AuditLog.Read.All"
+Get-MgAuditLogSignIn -Filter "userId eq '<user-id>'" -Top 50 |
+  Select-Object CreatedDateTime, UserPrincipalName, AppDisplayName, IpAddress, Location
+
+# Review risk detections:
+# Azure AD → Security → Identity Protection → Risk detections
+
+# Dismiss risk (if false positive):
+Connect-MgGraph -Scopes "IdentityRiskyUser.ReadWrite.All"
+Dismiss-MgRiskyUser -RiskyUserId <user-id>
+```
 
 ---
 
