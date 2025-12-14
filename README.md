@@ -262,6 +262,7 @@ The collector supports **3 endpoint access modes** (configurable during installa
 - **[API Guide](API_GUIDE.md)** - Complete API reference with examples
 - **[Vulnerabilities List](VULNERABILITIES.md)** - All 87 detections with remediation steps
 - **[Export Guide](EXPORT.md)** - Audit export workflows and examples
+- **[Azure Audit Guide](AZURE_AUDIT_GUIDE.md)** - Azure AD/Entra ID configuration and usage
 - **[Frontend Integration](FRONTEND_CHANGELOG.md)** - Guide for UI developers
 
 ### 🔐 Security & Compliance
@@ -290,6 +291,34 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 ---
 
 ##  Latest Updates
+
+### v2.7.0 (December 2025) ☁️ **AZURE ENTRA ID AUDIT**
+**Cloud AD Audit alongside On-Premises AD**
+
+#### ☁️ Azure AD / Entra ID Integration
+- ✅ **Microsoft Graph API** - Comprehensive Azure AD security audit
+- ✅ **20 SSE Progress Steps** - Real-time progress streaming for Azure audit
+- ✅ **Hybrid Format** - Universal format compatible with existing AD frontends
+- ✅ **Identity Protection** - Risky users/sign-ins detection (requires Azure AD P2)
+- ✅ **Conditional Access** - Policy analysis and MFA enforcement checks
+- ✅ **Privileged Access** - Role assignment and Global Admin monitoring
+- ✅ **Application Security** - Credential expiration and vulnerability detection
+- ✅ **Guest User Analysis** - External access risk assessment
+- 🎯 **Use Case**: Unified on-premises + cloud AD security monitoring
+- 📖 **Documentation**: See [AZURE_AUDIT_GUIDE.md](AZURE_AUDIT_GUIDE.md) for complete guide
+
+**New Endpoints:**
+- `POST /api/audit/azure/stream` - Run Azure audit with SSE streaming
+- `POST /api/audit/azure/status` - Check if Azure is configured
+
+**Configuration:**
+Run `./install.sh` and choose "Configure Azure AD audit" option, or manually set environment variables:
+```bash
+AZURE_ENABLED=true
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-client-id
+AZURE_CLIENT_SECRET=your-client-secret
+```
 
 ### v2.6.1 (December 2025) 🌐 **API EXPORT ENDPOINT**
 **Server-to-Server JSON Export**
@@ -417,8 +446,18 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 -  **Activity Tracking** - Login times, password expiry, account status
 -  **Security Audit** - Enterprise-grade AD security audit with 15-step progressive tracking, risk scoring (0-100), Kerberos security analysis, password security, privileged accounts detection, advanced security checks (LAPS, DCSync, Protected Users, weak encryption, sensitive delegation), findings by severity
 
+### ☁️ Cloud Integration (v2.7.0)
+-  **Azure AD / Entra ID Audit** - Microsoft Graph API integration for cloud AD security
+-  **Hybrid Deployment** - Audit both on-premises AD and cloud Azure AD from single collector
+-  **Identity Protection** - Risky users and sign-ins detection (Azure AD P2)
+-  **Conditional Access** - Policy analysis and MFA enforcement validation
+-  **Privileged Access Monitoring** - Global Administrator and role assignment tracking
+-  **Application Security** - Credential expiration and OAuth permission analysis
+-  **Guest User Analysis** - External access risk assessment and compliance
+-  **Real-Time Streaming** - 20-step SSE progress tracking for Azure audits
+
 ###  Developer Friendly
--  **27 REST API Endpoints** - Full CRUD operations
+-  **29 REST API Endpoints** - Full CRUD operations (27 AD + 2 Azure)
 -  **Docker Compose Ready** - One-command deployment
 -  **Comprehensive Documentation** - Setup guides, troubleshooting, best practices
 -  **Environment Variables** - Flexible configuration

@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.6.1",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.6.1: API export endpoint for local network transfers",
+  "version": "2.7.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.7.0: Azure Entra ID audit support with Microsoft Graph API integration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -11,7 +11,10 @@
     "ldap",
     "n8n",
     "ad-collector",
-    "automation"
+    "automation",
+    "azure",
+    "entra-id",
+    "microsoft-graph"
   ],
   "author": "AD Collector",
   "license": "MIT",
@@ -19,7 +22,9 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "ldapjs": "^3.0.5",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "isomorphic-fetch": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

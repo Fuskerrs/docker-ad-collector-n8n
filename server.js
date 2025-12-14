@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// Azure audit module (v2.7.0)
+const { azureAuditStreamHandler, azureStatusHandler } = require('./azure-audit');
+
 // Load version from package.json (single source of truth)
 const packageJson = require('./package.json');
 const APP_VERSION = packageJson.version;
@@ -5656,6 +5659,15 @@ app.get('/api/audit/last', authenticate, requireAuditAccess, (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// ========== AZURE ENTRA ID AUDIT (v2.7.0) ==========
+
+// Azure audit with SSE streaming (20 steps)
+// Requires Azure credentials configured via install.sh
+app.post('/api/audit/azure/stream', authenticate, requireAuditAccess, checkTokenUsageQuota, azureAuditStreamHandler);
+
+// Azure audit status - check if Azure is configured
+app.post('/api/audit/azure/status', authenticate, azureStatusHandler);
 
 // ========== GROUP OPERATIONS ==========
 

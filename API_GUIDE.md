@@ -1,10 +1,10 @@
 # AD Collector API Guide
 
-## Version: 2.6.0
+## Version: 2.7.0
 
 This guide describes all available API endpoints in the Docker AD Collector for n8n.
 
-**Version 2.6.0:** Local audit export feature for air-gapped environments + 87 vulnerability detections (16 new computer-specific checks)
+**Version 2.7.0:** Azure Entra ID audit support with Microsoft Graph API integration (on-premises AD + cloud Azure AD)
 
 ---
 
@@ -55,6 +55,22 @@ This guide describes all available API endpoints in the Docker AD Collector for 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MAX_PWD_AGE_DAYS` | Max password age for alerts | `90` |
+
+#### Azure AD / Entra ID Configuration (v2.7.0+)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AZURE_ENABLED` | Enable Azure audit | `false` |
+| `AZURE_TENANT_ID` | Azure Tenant ID | - |
+| `AZURE_CLIENT_ID` | Azure App Client ID | - |
+| `AZURE_CLIENT_SECRET` | Azure App Client Secret | - |
+
+**Azure App Registration Required Permissions:**
+- `User.Read.All` - Read all user profiles
+- `Directory.Read.All` - Read directory data
+- `Group.Read.All` - Read all groups
+- `Application.Read.All` - Read applications
+- `Policy.Read.All` - Read Conditional Access policies (optional)
+- `IdentityRiskyUser.Read.All` - Read risky users (requires Azure AD P2, optional)
 
 ---
 
@@ -1615,6 +1631,216 @@ curl -X GET http://localhost:8443/api/audit/last \
 - Cache TTL is **5 minutes** (300 seconds)
 - Each new audit (via `/api/audit` or `/api/audit/stream`) updates the cache
 - Returns the **complete audit object**, identical to `/api/audit` response
+
+---
+
+## Azure AD / Entra ID Audit (v2.7.0)
+
+### POST /api/audit/azure/stream
+
+**NEW in v2.7.0** - Performs comprehensive security audit of Azure AD/Entra ID using Microsoft Graph API with real-time SSE progress streaming (20 steps).
+
+**Prerequisites:**
+- Azure App Registration with appropriate permissions:
+  - `User.Read.All` - Read all user profiles
+  - `Directory.Read.All` - Read directory data
+  - `Policy.Read.All` - Read Conditional Access policies
+  - `IdentityRiskyUser.Read.All` - Read risky users (requires Azure AD P2)
+- Credentials configured via `install.sh` or environment variables
+
+**Body:**
+```json
+{}
+```
+
+**SSE Progress Steps (20 total):**
+```
+AZURE_STEP_01_INIT              → Initializing Azure audit
+AZURE_STEP_02_AUTH              → Authenticating to Microsoft Graph API
+AZURE_STEP_03_ORG_INFO          → Fetching organization information
+AZURE_STEP_04_USERS             → Fetching all users
+AZURE_STEP_05_GROUPS            → Fetching all groups
+AZURE_STEP_06_ROLES             → Fetching directory roles
+AZURE_STEP_07_APPS              → Fetching applications
+AZURE_STEP_08_SPS               → Fetching service principals
+AZURE_STEP_09_CA_POLICIES       → Fetching Conditional Access policies
+AZURE_STEP_10_RISKY_USERS       → Fetching risky users (Identity Protection)
+AZURE_STEP_11_USER_MFA          → Checking user MFA status
+AZURE_STEP_12_INACTIVE_USERS    → Detecting inactive users
+AZURE_STEP_13_GUEST_ACCESS      → Analyzing guest user access
+AZURE_STEP_14_PASSWORD_AGE      → Checking password age
+AZURE_STEP_15_PRIVILEGED        → Analyzing privileged roles
+AZURE_STEP_16_APP_CREDS         → Checking application credentials
+AZURE_STEP_17_CA_ANALYSIS       → Analyzing Conditional Access policies
+AZURE_STEP_18_RISK_ANALYSIS     → Processing Identity Protection risks
+AZURE_STEP_19_SCORING           → Calculating security score
+AZURE_STEP_20_COMPLETE          → Azure audit complete
+```
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -N -X POST http://localhost:8443/api/audit/azure/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**SSE Response Format:**
+```
+data: {"step":"AZURE_STEP_01_INIT","description":"Initializing Azure audit","status":"completed"}
+
+data: {"step":"AZURE_STEP_02_AUTH","description":"Authenticating to Microsoft Graph API","status":"completed"}
+
+data: {"step":"AZURE_STEP_04_USERS","description":"Fetching all users","status":"completed","count":1234}
+
+...
+
+data: {"step":"AZURE_STEP_20_COMPLETE","description":"Azure audit complete","status":"completed","count":87,"findings":{"critical":12,"high":34,"medium":56,"low":10,"score":68}}
+
+data: {
+  "success": true,
+  "audit": {
+    "metadata": {
+      "provider": "azure",
+      "tenantId": "12345678-1234-1234-1234-123456789012",
+      "organizationName": "Contoso Ltd",
+      "timestamp": "2025-12-08T10:30:45.123Z",
+      "duration": "45.23s",
+      "version": "2.7.0"
+    },
+    "summary": {
+      "users": 1234,
+      "groups": 89,
+      "applications": 150,
+      "servicePrincipals": 200,
+      "conditionalAccessPolicies": 5,
+      "vulnerabilities": {
+        "critical": 12,
+        "high": 34,
+        "medium": 56,
+        "low": 10,
+        "total": 112,
+        "score": 68
+      }
+    },
+    "findings": {
+      "critical": [...],
+      "high": [...],
+      "medium": [...],
+      "low": [...]
+    },
+    "azure": {
+      "userSecurity": {
+        "totalUsers": 1234,
+        "enabledUsers": 1180,
+        "guestUsers": 45,
+        "inactiveUsers": 23,
+        "riskyUsers": 5
+      },
+      "privilegedAccess": {
+        "totalRoles": 12,
+        "totalAssignments": 45,
+        "globalAdmins": 3,
+        "roleAssignments": { ... }
+      },
+      "applicationSecurity": {
+        "totalApplications": 150,
+        "totalServicePrincipals": 200,
+        "credentialIssues": 8
+      },
+      "conditionalAccess": {
+        "totalPolicies": 5,
+        "enabledPolicies": 4,
+        "disabledPolicies": 1,
+        "policies": [...]
+      },
+      "identityProtection": {
+        "riskyUsers": 5,
+        "available": true
+      },
+      "groupAnalysis": {
+        "totalGroups": 89,
+        "securityGroups": 67,
+        "dynamicGroups": 12
+      }
+    }
+  }
+}
+```
+
+**Hybrid Format Benefits:**
+- **Universal `summary` and `findings`**: Compatible with existing AD audit frontends
+- **Azure-specific `azure.*`**: Detailed Azure metrics for specialized UIs
+- **Easy Comparison**: Same structure allows side-by-side AD vs Azure analysis
+
+**Detected Vulnerabilities (Examples):**
+- `AZURE_GLOBAL_ADMIN_NO_MFA` - Global Administrator without MFA (CRITICAL)
+- `AZURE_USER_INACTIVE` - User inactive for 90+ days (HIGH)
+- `AZURE_GUEST_PRIVILEGED_ACCESS` - Guest with privileged role (CRITICAL)
+- `AZURE_PASSWORD_OLD` - Password not changed for 180+ days (MEDIUM)
+- `AZURE_APP_CREDENTIAL_EXPIRED` - Application credential expired (HIGH)
+- `AZURE_RISKY_USER` - User flagged by Identity Protection (CRITICAL/HIGH)
+- `AZURE_NO_MFA_CA_POLICY` - No MFA enforcement via Conditional Access (CRITICAL)
+- `AZURE_CA_POLICY_DISABLED` - Conditional Access policy disabled (MEDIUM)
+
+**Error Response (Azure not configured):**
+```
+data: {"step":"ERROR","status":"failed","error":"Azure credentials not configured. Run install.sh to configure Azure audit.","description":"Azure audit failed"}
+```
+
+---
+
+### POST /api/audit/azure/status
+
+**NEW in v2.7.0** - Check if Azure AD audit is configured and ready to use.
+
+**Body:**
+```json
+{}
+```
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -X POST http://localhost:8443/api/audit/azure/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Response (Configured):**
+```json
+{
+  "success": true,
+  "azure": {
+    "configured": true,
+    "tenantId": "12345678-1234-1234-1234-123456789012",
+    "clientId": "87654321-4321-4321-4321-210987654321",
+    "message": "Azure audit is configured and ready"
+  }
+}
+```
+
+**Response (Not Configured):**
+```json
+{
+  "success": true,
+  "azure": {
+    "configured": false,
+    "tenantId": null,
+    "clientId": null,
+    "message": "Azure audit not configured. Run install.sh to configure Azure credentials."
+  }
+}
+```
+
+**Use Cases:**
+1. **Frontend Check**: Determine whether to show Azure audit option
+2. **Health Monitoring**: Verify Azure configuration before running audits
+3. **Multi-tenant Support**: Identify which tenant is configured
 
 ---
 

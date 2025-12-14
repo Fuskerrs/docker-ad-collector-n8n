@@ -2,8 +2,8 @@ FROM node:18-alpine
 
 # Metadata
 LABEL maintainer="AD Collector for n8n"
-LABEL version="2.6.1"
-LABEL description="Active Directory Collector API for n8n-nodes-ad-admin"
+LABEL version="2.7.0"
+LABEL description="Active Directory Collector API with Azure Entra ID support"
 
 # Security: Run as non-root user
 RUN addgroup -g 1001 adcollector && \
@@ -19,6 +19,7 @@ RUN npm install --production && \
 
 # Copy application files
 COPY server.js ./
+COPY azure-audit.js ./
 COPY export-audit.js ./
 COPY entrypoint.sh ./
 
