@@ -77,10 +77,22 @@ async function createGraphClient(tenantId, clientId, clientSecret) {
 
 /**
  * Fetch all users with pagination support
+ * @param {Client} client - Graph API client
+ * @param {boolean} skipPremium - Skip Premium-only fields (signInActivity, lastPasswordChangeDateTime)
  */
-async function fetchAllUsers(client) {
+async function fetchAllUsers(client, skipPremium = false) {
   const users = [];
-  let nextLink = '/users?$select=id,userPrincipalName,displayName,mail,accountEnabled,signInActivity,lastPasswordChangeDateTime,createdDateTime,assignedLicenses,assignedPlans,onPremisesSyncEnabled,userType,passwordPolicies&$top=999';
+
+  // Premium fields: signInActivity, lastPasswordChangeDateTime
+  // Free tier fields: id, userPrincipalName, displayName, mail, accountEnabled, etc.
+  let nextLink;
+  if (skipPremium) {
+    // Free tenant - exclude Premium-only fields
+    nextLink = '/users?$select=id,userPrincipalName,displayName,mail,accountEnabled,createdDateTime,assignedLicenses,assignedPlans,onPremisesSyncEnabled,userType,passwordPolicies&$top=999';
+  } else {
+    // Premium tenant - include all fields
+    nextLink = '/users?$select=id,userPrincipalName,displayName,mail,accountEnabled,signInActivity,lastPasswordChangeDateTime,createdDateTime,assignedLicenses,assignedPlans,onPremisesSyncEnabled,userType,passwordPolicies&$top=999';
+  }
 
   while (nextLink) {
     const response = await client.api(nextLink).get();
@@ -586,9 +598,9 @@ async function azureAuditStreamHandler(req, res) {
     const organization = await fetchOrganization(client);
     sendProgress(res, 'AZURE_STEP_03_ORG_INFO', 'completed');
 
-    // STEP 4: Fetch users
+    // STEP 4: Fetch users (with or without Premium fields)
     sendProgress(res, 'AZURE_STEP_04_USERS', 'in_progress');
-    const users = await fetchAllUsers(client);
+    const users = await fetchAllUsers(client, skipPremiumCheck);
     sendProgress(res, 'AZURE_STEP_04_USERS', 'completed', users.length);
 
     // STEP 5: Fetch groups
