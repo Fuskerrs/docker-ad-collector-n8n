@@ -541,17 +541,39 @@ const AZURE_AUDIT_STEPS = [
 ];
 
 /**
- * Send SSE progress update
+ * Send SSE progress update (ISO format with AD audit)
  */
-function sendProgress(res, step, status = 'completed', count = 0, findings = {}) {
+function sendProgress(res, step, status = 'completed', count = 0, findings = {}, duration = null) {
   const stepData = AZURE_AUDIT_STEPS.find(s => s.step === step);
-  res.write(`data: ${JSON.stringify({
+  const eventData = {
     step: step,
     description: stepData?.description || step,
     status: status,
-    count: count,
-    findings: findings
-  })}\n\n`);
+    count: count
+  };
+
+  // Add duration if provided (like AD audit format)
+  if (duration !== null) {
+    eventData.duration = `${duration.toFixed(2)}s`;
+  }
+
+  // Add findings if any (for detailed progress)
+  if (findings && Object.keys(findings).length > 0) {
+    eventData.findings = findings;
+  }
+
+  // ISO SSE format with AD audit: event line + data line
+  res.write(`event: progress\n`);
+  res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+}
+
+/**
+ * Helper to track step with automatic duration (like AD audit)
+ */
+function trackStep(res, step, count = 0, findings = {}, stepStartTime) {
+  const duration = stepStartTime ? (Date.now() - stepStartTime) / 1000 : null;
+  sendProgress(res, step, 'completed', count, findings, duration);
+  console.log(`[AZURE AUDIT] ${step}: ${count} items - ${duration ? duration.toFixed(2) + 's' : 'N/A'}`);
 }
 
 // ====================================================================================================
@@ -563,12 +585,17 @@ function sendProgress(res, step, status = 'completed', count = 0, findings = {})
  */
 async function azureAuditStreamHandler(req, res) {
   const startTime = Date.now();
+  let stepStart = Date.now(); // Track individual step duration
 
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
+
+  // Send initial connection event (like AD audit)
+  res.write(`event: connected\n`);
+  res.write(`data: ${JSON.stringify({ message: 'Azure audit stream connected', timestamp: new Date().toISOString() })}\n\n`);
 
   try {
     // Parse request body options
@@ -586,27 +613,32 @@ async function azureAuditStreamHandler(req, res) {
     }
 
     // STEP 1: Initialize
-    sendProgress(res, 'AZURE_STEP_01_INIT', 'completed');
+    stepStart = Date.now();
+    sendProgress(res, 'AZURE_STEP_01_INIT', 'completed', 0, {}, (Date.now() - stepStart) / 1000);
 
     // STEP 2: Authenticate
+    stepStart = Date.now();
     sendProgress(res, 'AZURE_STEP_02_AUTH', 'in_progress');
     const client = await createGraphClient(tenantId, clientId, clientSecret);
-    sendProgress(res, 'AZURE_STEP_02_AUTH', 'completed');
+    trackStep(res, 'AZURE_STEP_02_AUTH', 0, {}, stepStart);
 
     // STEP 3: Organization info
+    stepStart = Date.now();
     sendProgress(res, 'AZURE_STEP_03_ORG_INFO', 'in_progress');
     const organization = await fetchOrganization(client);
-    sendProgress(res, 'AZURE_STEP_03_ORG_INFO', 'completed');
+    trackStep(res, 'AZURE_STEP_03_ORG_INFO', 0, {}, stepStart);
 
     // STEP 4: Fetch users (with or without Premium fields)
+    stepStart = Date.now();
     sendProgress(res, 'AZURE_STEP_04_USERS', 'in_progress');
     const users = await fetchAllUsers(client, skipPremiumCheck);
-    sendProgress(res, 'AZURE_STEP_04_USERS', 'completed', users.length);
+    trackStep(res, 'AZURE_STEP_04_USERS', users.length, {}, stepStart);
 
     // STEP 5: Fetch groups
+    stepStart = Date.now();
     sendProgress(res, 'AZURE_STEP_05_GROUPS', 'in_progress');
     const groups = await fetchAllGroups(client);
-    sendProgress(res, 'AZURE_STEP_05_GROUPS', 'completed', groups.length);
+    trackStep(res, 'AZURE_STEP_05_GROUPS', groups.length, {}, stepStart);
 
     // STEP 6: Fetch directory roles
     sendProgress(res, 'AZURE_STEP_06_ROLES', 'in_progress');
@@ -821,11 +853,11 @@ async function azureAuditStreamHandler(req, res) {
 
   } catch (error) {
     console.error('Azure audit error:', error);
+    // ISO SSE error format (like AD audit)
+    res.write(`event: error\n`);
     res.write(`data: ${JSON.stringify({
-      step: 'ERROR',
-      status: 'failed',
-      error: error.message,
-      description: 'Azure audit failed'
+      success: false,
+      error: error.message
     })}\n\n`);
     res.end();
   }
