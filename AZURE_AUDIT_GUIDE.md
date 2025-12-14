@@ -219,6 +219,56 @@ AZURE_STEP_19_SCORING       → Calculating security score
 AZURE_STEP_20_COMPLETE      → Azure audit complete
 ```
 
+### SSE Event Format
+
+Azure audit uses **Server-Sent Events (SSE)** with the same format as on-premises AD audit for compatibility:
+
+**Connection Event:**
+```
+event: connected
+data: {"message":"Azure audit stream connected","timestamp":"2025-12-14T13:35:22.418Z"}
+```
+
+**Progress Events:**
+```
+event: progress
+data: {
+  "step": "AZURE_STEP_04_USERS",
+  "description": "Fetching all users",
+  "status": "completed",
+  "count": 54,
+  "duration": "0.52s",
+  "findings": {"critical": 14}
+}
+```
+
+**Error Events:**
+```
+event: error
+data: {
+  "success": false,
+  "error": "Azure credentials not configured"
+}
+```
+
+**Event Types:**
+- `connected` - Initial connection established
+- `progress` - Step progress update (in_progress or completed)
+- `error` - Audit failed with error message
+
+**Progress Status:**
+- `in_progress` - Step is currently executing
+- `completed` - Step finished successfully
+- `skipped` - Step skipped (e.g., Premium features on free tenant)
+
+**Fields:**
+- `step` - Step identifier (AZURE_STEP_XX)
+- `description` - Human-readable step description
+- `status` - Step status (in_progress, completed, skipped)
+- `count` - Number of items processed
+- `duration` - Step execution time (e.g., "0.52s")
+- `findings` - Vulnerability counts by severity (optional)
+
 ---
 
 ## Detected Vulnerabilities
