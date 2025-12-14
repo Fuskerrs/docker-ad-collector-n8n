@@ -568,11 +568,36 @@ get_user_input() {
     # Bind DN
     while true; do
         read -p "   Bind DN (ex: CN=n8n-service,CN=Users,DC=example,DC=com): " LDAP_BIND_DN
-        if [[ -n $LDAP_BIND_DN ]]; then
-            break
-        else
+        if [[ -z $LDAP_BIND_DN ]]; then
             print_error "   Bind DN cannot be empty"
+            continue
         fi
+
+        # Validate DN format
+        # Check if DN starts with a valid component (CN=, OU=, DC=, etc.)
+        if [[ ! $LDAP_BIND_DN =~ ^(CN|OU|DC|O|L|ST|C|UID)= ]]; then
+            print_warning "   DN should start with a component like CN=, OU=, or DC="
+            print_warning "   Example: CN=n8n-service,CN=Users,DC=example,DC=com"
+            read -p "   Use it anyway? (y/n) [n]: " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                continue
+            fi
+        fi
+
+        # Check if DN contains DC= components (required for LDAP)
+        if [[ ! $LDAP_BIND_DN =~ DC= ]]; then
+            print_warning "   DN should contain domain components (DC=...)"
+            print_warning "   Example: CN=user,CN=Users,DC=example,DC=com"
+            read -p "   Use it anyway? (y/n) [n]: " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                continue
+            fi
+        fi
+
+        print_success "   DN format validated"
+        break
     done
     echo ""
 
@@ -1530,6 +1555,64 @@ update() {
     esac
     echo ""
 
+    # Azure configuration (v2.7.0)
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}☁️  Azure AD / Entra ID Configuration${NC}"
+
+    # Check current Azure configuration
+    CURRENT_AZURE_ENABLED=$(grep "^AZURE_ENABLED=" .env 2>/dev/null | cut -d'=' -f2)
+    CURRENT_AZURE_TENANT=$(grep "^AZURE_TENANT_ID=" .env 2>/dev/null | cut -d'=' -f2)
+
+    if [ "$CURRENT_AZURE_ENABLED" = "true" ] && [ -n "$CURRENT_AZURE_TENANT" ]; then
+        echo -e "${CYAN}   Current: ${GREEN}Enabled${NC} (Tenant: $CURRENT_AZURE_TENANT)"
+    else
+        echo -e "${CYAN}   Current: ${YELLOW}Not configured${NC}"
+    fi
+    echo ""
+
+    read -p "   Configure/Update Azure AD audit? (y/n) [n]: " -n 1 -r
+    echo ""
+    echo ""
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        CONFIGURE_AZURE="true"
+        echo -e "${GREEN}✓ Configuring Azure audit${NC}"
+        echo ""
+
+        # Get current values as defaults
+        CURRENT_TENANT_ID=$(grep "^AZURE_TENANT_ID=" .env 2>/dev/null | cut -d'=' -f2)
+        CURRENT_CLIENT_ID=$(grep "^AZURE_CLIENT_ID=" .env 2>/dev/null | cut -d'=' -f2)
+
+        if [ -n "$CURRENT_TENANT_ID" ]; then
+            read -p "   Azure Tenant ID [$CURRENT_TENANT_ID]: " input
+            AZURE_TENANT_ID=${input:-$CURRENT_TENANT_ID}
+        else
+            read -p "   Azure Tenant ID: " AZURE_TENANT_ID
+        fi
+
+        if [ -n "$CURRENT_CLIENT_ID" ]; then
+            read -p "   Azure Client ID [$CURRENT_CLIENT_ID]: " input
+            AZURE_CLIENT_ID=${input:-$CURRENT_CLIENT_ID}
+        else
+            read -p "   Azure Client ID (App Registration): " AZURE_CLIENT_ID
+        fi
+
+        read -s -p "   Azure Client Secret (leave empty to keep current): " AZURE_CLIENT_SECRET
+        echo ""
+
+        # If secret is empty, keep current one
+        if [ -z "$AZURE_CLIENT_SECRET" ]; then
+            AZURE_CLIENT_SECRET=$(grep "^AZURE_CLIENT_SECRET=" .env 2>/dev/null | cut -d'=' -f2)
+        fi
+
+        echo ""
+        print_success "Azure configuration updated"
+    else
+        CONFIGURE_AZURE="false"
+        print_info "Azure configuration unchanged"
+    fi
+    echo ""
+
     # Update .env file with new values
     if [ -f ".env" ]; then
         # Update TOKEN_MAX_USES
@@ -1548,6 +1631,39 @@ update() {
             sed -i "s/^# ENDPOINT_MODE=.*/ENDPOINT_MODE=$NEW_ENDPOINT_MODE/" .env
         else
             echo "ENDPOINT_MODE=$NEW_ENDPOINT_MODE" >> .env
+        fi
+
+        # Update Azure configuration
+        if [ "$CONFIGURE_AZURE" = "true" ]; then
+            # Update or add AZURE_ENABLED
+            if grep -q "^AZURE_ENABLED=" .env; then
+                sed -i "s/^AZURE_ENABLED=.*/AZURE_ENABLED=true/" .env
+            else
+                echo "AZURE_ENABLED=true" >> .env
+            fi
+
+            # Update or add AZURE_TENANT_ID
+            if grep -q "^AZURE_TENANT_ID=" .env; then
+                sed -i "s|^AZURE_TENANT_ID=.*|AZURE_TENANT_ID=$AZURE_TENANT_ID|" .env
+            else
+                echo "AZURE_TENANT_ID=$AZURE_TENANT_ID" >> .env
+            fi
+
+            # Update or add AZURE_CLIENT_ID
+            if grep -q "^AZURE_CLIENT_ID=" .env; then
+                sed -i "s|^AZURE_CLIENT_ID=.*|AZURE_CLIENT_ID=$AZURE_CLIENT_ID|" .env
+            else
+                echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID" >> .env
+            fi
+
+            # Update or add AZURE_CLIENT_SECRET
+            if [ -n "$AZURE_CLIENT_SECRET" ]; then
+                if grep -q "^AZURE_CLIENT_SECRET=" .env; then
+                    sed -i "s|^AZURE_CLIENT_SECRET=.*|AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET|" .env
+                else
+                    echo "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET" >> .env
+                fi
+            fi
         fi
     fi
 
