@@ -847,7 +847,8 @@ async function azureAuditStreamHandler(req, res) {
       score: score
     });
 
-    // Send final result
+    // Send final result with event: complete (ISO with AD audit)
+    res.write(`event: complete\n`);
     res.write(`data: ${JSON.stringify(auditResult)}\n\n`);
     res.end();
 
