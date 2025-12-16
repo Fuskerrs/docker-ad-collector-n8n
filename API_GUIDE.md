@@ -1,10 +1,10 @@
 # AD Collector API Guide
 
-## Version: 2.7.0
+## Version: 2.8.0
 
 This guide describes all available API endpoints in the Docker AD Collector for n8n.
 
-**Version 2.7.0:** Azure Entra ID audit support with Microsoft Graph API integration (on-premises AD + cloud Azure AD)
+**Version 2.8.0:** API harmonization with provider-specific endpoints, detailed test connections with domain/tenant info, global status endpoint, and sensitive data masking
 
 ---
 
@@ -115,11 +115,15 @@ curl http://localhost:8443/health
 
 ---
 
-### LDAP Connection Test
+### Connection Testing Endpoints
 
 #### POST /api/test-connection
 
-Tests the connection to the Active Directory server.
+**Deprecated - Use provider-specific endpoints instead**
+
+Legacy endpoint that tests Active Directory connection. For backward compatibility only.
+
+**Recommendation:** Use `/api/test-connection/ad` for detailed Active Directory information.
 
 **Body:** None
 
@@ -139,6 +143,293 @@ curl -X POST http://localhost:8443/api/test-connection \
   "connected": true
 }
 ```
+
+---
+
+#### POST /api/test-connection/ad
+
+**NEW in v2.8.0** - Tests Active Directory connection and returns detailed domain information.
+
+**Why use this endpoint?**
+- ✅ Detailed Active Directory domain information (name, functional level, DC hostname)
+- ✅ LDAP server metadata (version, security, naming contexts)
+- ✅ Optional sensitive data masking
+- ✅ Better diagnostics than legacy endpoint
+
+**Body:**
+```json
+{
+  "maskSensitiveData": false
+}
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maskSensitiveData` | boolean | `false` | Mask domain names, DNs, and server hostnames |
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+# Standard test with full details
+curl -X POST http://localhost:8443/api/test-connection/ad \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Test with masked sensitive data
+curl -X POST http://localhost:8443/api/test-connection/ad \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"maskSensitiveData": true}'
+```
+
+**Success response:**
+```json
+{
+  "success": true,
+  "connected": true,
+  "provider": "active-directory",
+  "domain": {
+    "name": "example.com",
+    "dn": "DC=example,DC=com",
+    "controller": "dc01.example.com",
+    "functionalLevel": "Windows Server 2016",
+    "forestLevel": "Windows Server 2016"
+  },
+  "ldap": {
+    "version": 3,
+    "secure": true,
+    "port": 636
+  },
+  "contexts": {
+    "default": "DC=example,DC=com",
+    "configuration": "CN=Configuration,DC=example,DC=com",
+    "schema": "CN=Schema,CN=Configuration,DC=example,DC=com"
+  },
+  "serverTime": "2025-12-15T10:30:45.123Z"
+}
+```
+
+**Response with masked data:**
+```json
+{
+  "success": true,
+  "connected": true,
+  "provider": "active-directory",
+  "domain": {
+    "name": "***MASKED***",
+    "dn": "***MASKED***",
+    "controller": "***MASKED***",
+    "functionalLevel": "Windows Server 2016",
+    "forestLevel": "Windows Server 2016"
+  },
+  "ldap": {
+    "version": 3,
+    "secure": true,
+    "port": 636
+  },
+  "contexts": {
+    "default": "***MASKED***",
+    "configuration": "***MASKED***",
+    "schema": "***MASKED***"
+  },
+  "serverTime": "2025-12-15T10:30:45.123Z"
+}
+```
+
+**Functional Levels Detected:**
+- `Windows 2000` (Level 0)
+- `Windows Server 2003` (Level 2)
+- `Windows Server 2008` (Level 3)
+- `Windows Server 2008 R2` (Level 4)
+- `Windows Server 2012` (Level 5)
+- `Windows Server 2012 R2` (Level 6)
+- `Windows Server 2016` (Level 7)
+- `Windows Server 2025` (Level 10)
+
+---
+
+#### POST /api/test-connection/azure
+
+**NEW in v2.8.0** - Tests Azure Entra ID connection and returns detailed tenant information.
+
+**Prerequisites:**
+- Azure credentials configured via environment variables or `install.sh`
+- App Registration with required permissions (User.Read.All, Directory.Read.All)
+
+**Body:**
+```json
+{
+  "maskSensitiveData": false
+}
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maskSensitiveData` | boolean | `false` | Mask tenant ID, tenant name, domains, and client ID |
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+# Standard test with full details
+curl -X POST http://localhost:8443/api/test-connection/azure \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Test with masked sensitive data
+curl -X POST http://localhost:8443/api/test-connection/azure \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"maskSensitiveData": true}'
+```
+
+**Success response:**
+```json
+{
+  "success": true,
+  "connected": true,
+  "provider": "azure-entra-id",
+  "tenant": {
+    "id": "12345678-1234-1234-1234-123456789012",
+    "name": "Contoso Ltd",
+    "country": "US",
+    "defaultDomain": "contoso.onmicrosoft.com",
+    "verifiedDomains": [
+      "contoso.onmicrosoft.com",
+      "contoso.com"
+    ]
+  },
+  "authentication": {
+    "method": "client-credentials",
+    "tokenValid": true,
+    "clientId": "87654321-4321-4321-4321-210987654321"
+  }
+}
+```
+
+**Error response (not configured):**
+```json
+{
+  "success": false,
+  "connected": false,
+  "provider": "azure-entra-id",
+  "error": "Azure credentials not configured"
+}
+```
+
+---
+
+#### POST /api/status
+
+**NEW in v2.8.0** - Global status endpoint showing all configured providers (AD, Azure, AWS) with 30-second cache.
+
+**Why use this endpoint?**
+- ✅ Single endpoint to check all providers
+- ✅ Cached for 30 seconds (reduces load)
+- ✅ Force refresh option
+- ✅ Returns version, connectivity, and basic info for each provider
+
+**Body:**
+```json
+{
+  "maskSensitiveData": false,
+  "forceRefresh": false
+}
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maskSensitiveData` | boolean | `false` | Mask all sensitive information |
+| `forceRefresh` | boolean | `false` | Bypass cache and fetch fresh data |
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+# Standard status check (uses cache)
+curl -X POST http://localhost:8443/api/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Force refresh (bypass cache)
+curl -X POST http://localhost:8443/api/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"forceRefresh": true}'
+```
+
+**Success response (cached):**
+```json
+{
+  "success": true,
+  "version": "2.8.0",
+  "providers": {
+    "ad": {
+      "available": true,
+      "connected": true,
+      "domainName": "example.com",
+      "domainController": "dc01.example.com",
+      "functionalLevel": "Windows Server 2016"
+    },
+    "azure": {
+      "available": true,
+      "configured": true,
+      "connected": true,
+      "tenantName": "Contoso Ltd",
+      "tenantId": "12345678-1234-1234-1234-123456789012",
+      "defaultDomain": "contoso.onmicrosoft.com"
+    },
+    "aws": {
+      "available": false,
+      "configured": false,
+      "connected": false
+    }
+  },
+  "cached": true,
+  "cacheAge": "12s"
+}
+```
+
+**Success response (fresh, no Azure configured):**
+```json
+{
+  "success": true,
+  "version": "2.8.0",
+  "providers": {
+    "ad": {
+      "available": true,
+      "connected": true,
+      "domainName": "example.com",
+      "domainController": "dc01.example.com",
+      "functionalLevel": "Windows Server 2016"
+    },
+    "azure": {
+      "available": true,
+      "configured": false,
+      "connected": false
+    },
+    "aws": {
+      "available": false,
+      "configured": false,
+      "connected": false
+    }
+  },
+  "cached": false
+}
+```
+
+**Cache Behavior:**
+- Cache TTL: 30 seconds
+- Automatically refreshed on first request after expiration
+- Use `forceRefresh: true` to bypass cache
+- Cache includes all provider status checks
 
 ---
 
@@ -652,11 +943,126 @@ Récupère l'activité d'un utilisateur (dernière connexion, etc.).
 
 ---
 
+## Active Directory Audit Endpoints (v2.8.0)
+
+### Provider-Specific AD Audit Endpoints
+
+**NEW in v2.8.0:** All AD audit endpoints have been harmonized with provider-specific naming:
+- `/api/audit/ad` - Non-streaming audit (alias of `/api/audit`)
+- `/api/audit/ad/stream` - SSE streaming audit (alias of `/api/audit/stream`)
+- `/api/audit/ad/status` - AD audit status with detailed domain info
+
+**Legacy endpoints** (`/api/audit`, `/api/audit/stream`) remain for backward compatibility.
+
+---
+
+### POST /api/audit/ad/status
+
+**NEW in v2.8.0** - Returns Active Directory audit availability status with detailed domain information.
+
+**Why use this endpoint?**
+- ✅ Check if AD audit is available before running
+- ✅ Get detailed domain information without running full audit
+- ✅ Lightweight status check (no full audit execution)
+- ✅ Optional sensitive data masking
+
+**Body:**
+```json
+{
+  "maskSensitiveData": false
+}
+```
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -X POST http://localhost:8443/api/audit/ad/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Success response:**
+```json
+{
+  "success": true,
+  "provider": "active-directory",
+  "available": true,
+  "connected": true,
+  "domain": {
+    "name": "example.com",
+    "dn": "DC=example,DC=com",
+    "controller": "dc01.example.com",
+    "functionalLevel": "Windows Server 2016",
+    "forestLevel": "Windows Server 2016"
+  },
+  "ldap": {
+    "version": 3,
+    "secure": true,
+    "port": 636
+  },
+  "contexts": {
+    "default": "DC=example,DC=com",
+    "configuration": "CN=Configuration,DC=example,DC=com",
+    "schema": "CN=Schema,CN=Configuration,DC=example,DC=com"
+  },
+  "serverTime": "2025-12-15T10:30:45.123Z"
+}
+```
+
+**Use Cases:**
+1. **Pre-flight Check**: Verify AD is reachable before running full audit
+2. **Dashboard Display**: Show domain info without running audit
+3. **Multi-Provider UI**: Check which providers are available
+
+---
+
+### POST /api/audit/ad
+
+**NEW in v2.8.0** - Provider-specific alias of `/api/audit`.
+
+Performs a comprehensive enterprise-grade security audit of Active Directory (without SSE streaming).
+
+**Recommendation:** Use `/api/audit/ad/stream` for real-time progress updates.
+
+**Body:** Same as `/api/audit` (see Comprehensive Active Directory Audit section below)
+
+**Example:**
+```bash
+curl -X POST http://localhost:8443/api/audit/ad \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"includeDetails": false, "includeComputers": false}'
+```
+
+---
+
+### POST /api/audit/ad/stream
+
+**NEW in v2.8.0** - Provider-specific alias of `/api/audit/stream`.
+
+Performs comprehensive AD audit with Server-Sent Events (SSE) streaming for real-time progress.
+
+**Body:** Same as `/api/audit/stream` (see SSE Audit section below)
+
+**Example:**
+```bash
+curl -N -X POST http://localhost:8443/api/audit/ad/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"includeDetails": false, "includeComputers": false}'
+```
+
+---
+
 ## Comprehensive Active Directory Audit
 
 ### POST /api/audit
 
-Performs a comprehensive enterprise-grade security audit of Active Directory with step-by-step progress tracking.
+**Deprecated - Use `/api/audit/ad` instead**
+
+Legacy endpoint for backward compatibility. Performs a comprehensive enterprise-grade security audit of Active Directory with step-by-step progress tracking.
 
 **Body :**
 ```json
@@ -1203,7 +1609,9 @@ score = 100 - 5 - 19 = 76
 
 ### POST /api/audit/stream
 
-**NEW in v1.7.0** - Performs the same comprehensive audit as `/api/audit` but streams real-time progress updates using Server-Sent Events (SSE).
+**Deprecated - Use `/api/audit/ad/stream` instead**
+
+**NEW in v1.7.0** - Legacy endpoint for backward compatibility. Performs the same comprehensive audit as `/api/audit` but streams real-time progress updates using Server-Sent Events (SSE).
 
 **Why use SSE?**
 - ✅ Real-time progress tracking (15 steps)

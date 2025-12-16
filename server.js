@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Azure audit module (v2.7.0)
-const { azureAuditStreamHandler, azureStatusHandler } = require('./azure-audit');
+const { azureAuditStreamHandler, azureStatusHandler, azureTestConnectionHandler } = require('./azure-audit');
 
 // Load version from package.json (single source of truth)
 const packageJson = require('./package.json');
@@ -350,6 +350,101 @@ function createLdapClient() {
   });
 }
 
+/**
+ * Get detailed Active Directory information from rootDSE
+ * @param {boolean} maskSensitive - Mask sensitive data (domain names, etc.)
+ * @returns {Promise<Object>} Detailed AD information
+ */
+async function getDetailedADInfo(maskSensitive = false) {
+  const client = await createLdapClient();
+
+  return new Promise((resolve, reject) => {
+    // Query rootDSE (empty DN, base scope)
+    client.search('', { scope: 'base', attributes: ['*'] }, (err, search) => {
+      if (err) {
+        client.unbind();
+        return reject(err);
+      }
+
+      let rootDSE = null;
+
+      search.on('searchEntry', (entry) => {
+        rootDSE = entry.pojo.attributes;
+      });
+
+      search.on('error', (err) => {
+        client.unbind();
+        reject(err);
+      });
+
+      search.on('end', () => {
+        client.unbind();
+
+        if (!rootDSE) {
+          return reject(new Error('Failed to retrieve rootDSE'));
+        }
+
+        // Extract domain name from defaultNamingContext
+        const defaultNC = rootDSE.defaultNamingContext?.[0] || config.ldap.baseDN;
+        const domainDN = defaultNC;
+
+        // Convert DN to DNS name (DC=example,DC=com -> example.com)
+        const domainName = domainDN
+          .split(',')
+          .filter(part => part.trim().toUpperCase().startsWith('DC='))
+          .map(part => part.trim().substring(3))
+          .join('.');
+
+        // Extract domain controller name from config URL
+        const urlMatch = config.ldap.url.match(/(?:ldaps?:\/\/)?([^:\/]+)/);
+        const dcHostname = urlMatch ? urlMatch[1] : 'unknown';
+
+        // Functional level mapping
+        const functionalLevels = {
+          '0': 'Windows 2000',
+          '1': 'Windows Server 2003 Interim',
+          '2': 'Windows Server 2003',
+          '3': 'Windows Server 2008',
+          '4': 'Windows Server 2008 R2',
+          '5': 'Windows Server 2012',
+          '6': 'Windows Server 2012 R2',
+          '7': 'Windows Server 2016',
+          '10': 'Windows Server 2025'
+        };
+
+        const forestLevel = rootDSE.forestFunctionality?.[0];
+        const domainLevel = rootDSE.domainFunctionality?.[0];
+
+        const result = {
+          success: true,
+          connected: true,
+          provider: 'active-directory',
+          domain: {
+            name: maskSensitive ? '***MASKED***' : domainName,
+            dn: maskSensitive ? '***MASKED***' : domainDN,
+            controller: maskSensitive ? '***MASKED***' : dcHostname,
+            functionalLevel: functionalLevels[domainLevel] || `Unknown (${domainLevel})`,
+            forestLevel: functionalLevels[forestLevel] || `Unknown (${forestLevel})`
+          },
+          ldap: {
+            version: parseInt(rootDSE.supportedLDAPVersion?.[rootDSE.supportedLDAPVersion.length - 1] || '3'),
+            secure: config.ldap.url.startsWith('ldaps'),
+            port: config.ldap.url.includes(':636') ? 636 : 389
+          },
+          contexts: {
+            default: maskSensitive ? '***MASKED***' : (rootDSE.defaultNamingContext?.[0] || domainDN),
+            configuration: maskSensitive ? '***MASKED***' : (rootDSE.configurationNamingContext?.[0] || `CN=Configuration,${domainDN}`),
+            schema: maskSensitive ? '***MASKED***' : (rootDSE.schemaNamingContext?.[0] || `CN=Schema,CN=Configuration,${domainDN}`)
+          },
+          serverTime: rootDSE.currentTime?.[0] || new Date().toISOString()
+        };
+
+        resolve(result);
+      });
+    });
+  });
+}
+
 // Helper to search for a single entry
 async function searchOne(filter, attributes = ['*']) {
   const client = await createLdapClient();
@@ -661,7 +756,107 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'ad-collector', version: APP_VERSION });
 });
 
+// Global status cache (30 seconds)
+let globalStatusCache = null;
+let globalStatusCacheTime = 0;
+const GLOBAL_STATUS_CACHE_TTL = 30000; // 30 seconds
+
+// Global status endpoint (v2.8.0) - shows all configured providers
+app.post('/api/status', authenticate, async (req, res) => {
+  try {
+    const { maskSensitiveData, forceRefresh } = req.body;
+    const now = Date.now();
+
+    // Use cache if available and not expired (unless forceRefresh requested)
+    if (!forceRefresh && globalStatusCache && (now - globalStatusCacheTime) < GLOBAL_STATUS_CACHE_TTL) {
+      return res.json({
+        ...globalStatusCache,
+        cached: true,
+        cacheAge: `${Math.floor((now - globalStatusCacheTime) / 1000)}s`
+      });
+    }
+
+    const status = {
+      success: true,
+      version: APP_VERSION,
+      providers: {}
+    };
+
+    // Test AD (Active Directory)
+    try {
+      const adInfo = await getDetailedADInfo(maskSensitiveData === true);
+      status.providers.ad = {
+        available: true,
+        connected: true,
+        domainName: adInfo.domain.name,
+        domainController: adInfo.domain.controller,
+        functionalLevel: adInfo.domain.functionalLevel
+      };
+    } catch (error) {
+      status.providers.ad = {
+        available: true,
+        connected: false,
+        error: error.message
+      };
+    }
+
+    // Test Azure (Entra ID)
+    const azureTenantId = process.env.AZURE_TENANT_ID;
+    const azureClientId = process.env.AZURE_CLIENT_ID;
+    const azureClientSecret = process.env.AZURE_CLIENT_SECRET;
+
+    if (azureTenantId && azureClientId && azureClientSecret) {
+      try {
+        const azureInfo = await getDetailedAzureInfo(maskSensitiveData === true);
+        status.providers.azure = {
+          available: true,
+          configured: true,
+          connected: true,
+          tenantName: azureInfo.tenant.name,
+          tenantId: azureInfo.tenant.id,
+          defaultDomain: azureInfo.tenant.defaultDomain
+        };
+      } catch (error) {
+        status.providers.azure = {
+          available: true,
+          configured: true,
+          connected: false,
+          error: error.message
+        };
+      }
+    } else {
+      status.providers.azure = {
+        available: true,
+        configured: false,
+        connected: false
+      };
+    }
+
+    // AWS (future)
+    status.providers.aws = {
+      available: false,
+      configured: false,
+      connected: false
+    };
+
+    // Update cache
+    globalStatusCache = status;
+    globalStatusCacheTime = now;
+
+    res.json({
+      ...status,
+      cached: false
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Test LDAP connection
+// Test AD connection (legacy endpoint - redirects to /ad)
 app.post('/api/test-connection', authenticate, async (req, res) => {
   try {
     const client = await createLdapClient();
@@ -681,6 +876,25 @@ app.post('/api/test-connection', authenticate, async (req, res) => {
     });
   }
 });
+
+// Test AD connection with detailed information (v2.8.0)
+app.post('/api/test-connection/ad', authenticate, async (req, res) => {
+  try {
+    const { maskSensitiveData } = req.body;
+    const info = await getDetailedADInfo(maskSensitiveData === true);
+    res.json(info);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      connected: false,
+      provider: 'active-directory',
+      error: error.message
+    });
+  }
+});
+
+// Test Azure connection with detailed information (v2.8.0)
+app.post('/api/test-connection/azure', authenticate, azureTestConnectionHandler);
 
 // ========== USER OPERATIONS ==========
 
@@ -5661,6 +5875,46 @@ app.get('/api/audit/last', authenticate, requireAuditAccess, (req, res) => {
 });
 
 // ========== AZURE ENTRA ID AUDIT (v2.7.0) ==========
+
+// ========== NEW STRUCTURED ENDPOINTS (v2.8.0) ==========
+
+// AD Audit endpoints with explicit provider naming
+// These are NEW endpoints - old /api/audit and /api/audit/stream remain for backward compatibility
+
+// AD Audit without streaming (v2.8.0) - same as /api/audit
+app.post('/api/audit/ad', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res, next) => {
+  // Reuse /api/audit handler by forwarding request
+  req.url = '/api/audit';
+  next();
+});
+
+// AD Audit with SSE streaming (v2.8.0) - same as /api/audit/stream
+app.post('/api/audit/ad/stream', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res, next) => {
+  // Reuse /api/audit/stream handler by forwarding request
+  req.url = '/api/audit/stream';
+  next();
+});
+
+// AD Audit status (v2.8.0) - check if AD is configured and get info
+app.post('/api/audit/ad/status', authenticate, async (req, res) => {
+  try {
+    const { maskSensitiveData } = req.body;
+    const info = await getDetailedADInfo(maskSensitiveData === true);
+    res.json({
+      success: true,
+      provider: 'active-directory',
+      available: true,
+      ...info
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      provider: 'active-directory',
+      available: false,
+      error: error.message
+    });
+  }
+});
 
 // Azure audit with SSE streaming (20 steps)
 // Requires Azure credentials configured via install.sh

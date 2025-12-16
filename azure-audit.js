@@ -887,11 +887,77 @@ async function azureStatusHandler(req, res) {
   });
 }
 
+/**
+ * Get detailed Azure tenant information
+ * @param {boolean} maskSensitive - Mask sensitive data (tenant ID, domains, etc.)
+ * @returns {Promise<Object>} Detailed Azure tenant information
+ */
+async function getDetailedAzureInfo(maskSensitive = false) {
+  const tenantId = process.env.AZURE_TENANT_ID;
+  const clientId = process.env.AZURE_CLIENT_ID;
+  const clientSecret = process.env.AZURE_CLIENT_SECRET;
+
+  if (!tenantId || !clientId || !clientSecret) {
+    throw new Error('Azure credentials not configured');
+  }
+
+  // Create Graph client
+  const client = await createGraphClient(tenantId, clientId, clientSecret);
+
+  // Fetch organization information
+  const organization = await client.api('/organization').get();
+  const orgData = organization.value[0];
+
+  // Extract verified domains
+  const verifiedDomains = orgData.verifiedDomains
+    .filter(d => d.isVerified)
+    .map(d => d.name);
+
+  const defaultDomain = orgData.verifiedDomains.find(d => d.isDefault)?.name || verifiedDomains[0];
+
+  return {
+    success: true,
+    connected: true,
+    provider: 'azure-entra-id',
+    tenant: {
+      id: maskSensitive ? '***MASKED***' : tenantId,
+      name: maskSensitive ? '***MASKED***' : orgData.displayName,
+      country: orgData.countryLetterCode || 'Unknown',
+      defaultDomain: maskSensitive ? '***MASKED***' : defaultDomain,
+      verifiedDomains: maskSensitive ? ['***MASKED***'] : verifiedDomains
+    },
+    authentication: {
+      method: 'client-credentials',
+      tokenValid: true,
+      clientId: maskSensitive ? '***MASKED***' : clientId
+    }
+  };
+}
+
+/**
+ * Azure test connection handler - detailed tenant information
+ */
+async function azureTestConnectionHandler(req, res) {
+  try {
+    const { maskSensitiveData } = req.body;
+    const info = await getDetailedAzureInfo(maskSensitiveData === true);
+    res.json(info);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      connected: false,
+      provider: 'azure-entra-id',
+      error: error.message
+    });
+  }
+}
+
 // ====================================================================================================
 // EXPORTS
 // ====================================================================================================
 
 module.exports = {
   azureAuditStreamHandler,
-  azureStatusHandler
+  azureStatusHandler,
+  azureTestConnectionHandler
 };

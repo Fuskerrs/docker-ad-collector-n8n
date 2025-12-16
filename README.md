@@ -292,6 +292,48 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 
 ##  Latest Updates
 
+### v2.8.0 (December 2025) 🔄 **API HARMONIZATION & ENHANCED TESTING**
+**Provider-Specific Endpoints, Detailed Test Connections, and Global Status**
+
+#### 🔄 API Harmonization
+- ✅ **Provider-Specific Endpoints** - Clear separation: `/api/audit/ad`, `/api/audit/azure`, future `/api/audit/aws`
+- ✅ **Backward Compatibility** - Legacy endpoints (`/api/audit`, `/api/test-connection`) remain functional
+- ✅ **No Breaking Changes** - All existing integrations continue to work
+
+#### 🔍 Enhanced Test Connection Endpoints
+- ✅ **`POST /api/test-connection/ad`** - Detailed Active Directory information
+  - Domain name, DN, and domain controller hostname
+  - Functional level detection (Windows 2000 to Windows Server 2025)
+  - Forest level, LDAP version, security settings
+  - Naming contexts (default, configuration, schema)
+- ✅ **`POST /api/test-connection/azure`** - Detailed Azure Entra ID information
+  - Tenant ID, name, country, verified domains
+  - Default domain, authentication method
+  - Client credentials validation
+- ✅ **Sensitive Data Masking** - Optional `maskSensitiveData` parameter for all test endpoints
+  - Masks domain names, tenant IDs, DNs, server hostnames
+  - Useful for screenshots, demos, and public documentation
+
+#### 📊 Global Status Endpoint
+- ✅ **`POST /api/status`** - Unified status for all providers (AD, Azure, AWS)
+  - Single endpoint to check all configured providers
+  - 30-second cache (reduces load on production systems)
+  - Force refresh option via `forceRefresh: true`
+  - Returns version, connectivity status, and basic info
+- 🎯 **Use Cases**: Multi-provider dashboards, health checks, monitoring
+
+#### 🆕 New AD Audit Endpoints
+- ✅ **`POST /api/audit/ad`** - Provider-specific AD audit (alias of `/api/audit`)
+- ✅ **`POST /api/audit/ad/stream`** - Provider-specific SSE streaming (alias of `/api/audit/stream`)
+- ✅ **`POST /api/audit/ad/status`** - AD audit status with detailed domain info
+
+**Migration Path:**
+- Old endpoints: `/api/test-connection`, `/api/audit`, `/api/audit/stream` → Still work (backward compatible)
+- New endpoints: Use provider-specific versions for future-proof integrations
+- 📖 **Documentation**: See [API_GUIDE.md](API_GUIDE.md) for complete endpoint reference
+
+---
+
 ### v2.7.0 (December 2025) ☁️ **AZURE ENTRA ID AUDIT**
 **Cloud AD Audit alongside On-Premises AD**
 
