@@ -832,8 +832,8 @@ app.post('/api/status', authenticate, async (req, res) => {
       };
     }
 
-    // AWS (future)
-    status.providers.aws = {
+    // Google Workspace (future)
+    status.providers.gws = {
       available: false,
       configured: false,
       connected: false

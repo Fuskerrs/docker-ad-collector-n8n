@@ -326,7 +326,7 @@ curl -X POST http://localhost:8443/api/test-connection/azure \
 
 #### POST /api/status
 
-**NEW in v2.8.0** - Global status endpoint showing all configured providers (AD, Azure, AWS) with 30-second cache.
+**NEW in v2.8.0** - Global status endpoint showing all configured providers (AD, Azure, GWS) with 30-second cache.
 
 **Why use this endpoint?**
 - ✅ Single endpoint to check all providers
@@ -386,7 +386,7 @@ curl -X POST http://localhost:8443/api/status \
       "tenantId": "12345678-1234-1234-1234-123456789012",
       "defaultDomain": "contoso.onmicrosoft.com"
     },
-    "aws": {
+    "gws": {
       "available": false,
       "configured": false,
       "connected": false
@@ -415,7 +415,7 @@ curl -X POST http://localhost:8443/api/status \
       "configured": false,
       "connected": false
     },
-    "aws": {
+    "gws": {
       "available": false,
       "configured": false,
       "connected": false

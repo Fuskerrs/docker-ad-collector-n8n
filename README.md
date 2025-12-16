@@ -391,7 +391,7 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 **Provider-Specific Endpoints, Detailed Test Connections, and Global Status**
 
 #### 🔄 API Harmonization
-- ✅ **Provider-Specific Endpoints** - Clear separation: `/api/audit/ad`, `/api/audit/azure`, future `/api/audit/aws`
+- ✅ **Provider-Specific Endpoints** - Clear separation: `/api/audit/ad`, `/api/audit/azure`, future `/api/audit/gws` (Google Workspace)
 - ✅ **Backward Compatibility** - Legacy endpoints (`/api/audit`, `/api/test-connection`) remain functional
 - ✅ **No Breaking Changes** - All existing integrations continue to work
 
@@ -410,7 +410,7 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
   - Useful for screenshots, demos, and public documentation
 
 #### 📊 Global Status Endpoint
-- ✅ **`POST /api/status`** - Unified status for all providers (AD, Azure, AWS)
+- ✅ **`POST /api/status`** - Unified status for all providers (AD, Azure, GWS)
   - Single endpoint to check all configured providers
   - 30-second cache (reduces load on production systems)
   - Force refresh option via `forceRefresh: true`
