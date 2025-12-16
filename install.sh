@@ -718,6 +718,36 @@ get_user_input() {
         print_info "Azure audit disabled (can be configured later)"
     fi
     echo ""
+
+    # Token information disclosure (v2.9.0)
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}🔐 Token Information Disclosure (Security)${NC}"
+    echo -e "${CYAN}   Control whether tokens can query their own usage details${NC}"
+    echo ""
+    echo -e "${BOLD}When DISABLED (recommended):${NC}"
+    echo -e "   - Stolen tokens cannot query remaining uses or expiration"
+    echo -e "   - GET /api/token/info returns 403 Forbidden"
+    echo -e "   - Error messages hide usage details"
+    echo ""
+    echo -e "${BOLD}When ENABLED:${NC}"
+    echo -e "   - GET /api/token/info shows usage quota and expiration"
+    echo -e "   - Response headers include token metadata"
+    echo -e "   - Error messages show detailed information"
+    echo ""
+    read -p "   Enable token info disclosure? (y/n) [n]: " -n 1 -r
+    echo ""
+    echo ""
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        TOKEN_INFO_ENABLED="true"
+        print_warning "Token info disclosure enabled"
+        print_info "Tokens will be able to query their usage details"
+    else
+        TOKEN_INFO_ENABLED="false"
+        print_success "Token info disclosure disabled (secure by default)"
+        print_info "Stolen tokens cannot query usage details"
+    fi
+    echo ""
 }
 
 show_configuration_summary() {
@@ -735,9 +765,14 @@ show_configuration_summary() {
     echo -e "  TLS Verify:    $LDAP_TLS_VERIFY"
     echo ""
     echo -e "${BOLD}Security Settings:${NC}"
-    echo -e "  Token Expiry:   $TOKEN_EXPIRY"
-    echo -e "  Token Max Uses: $TOKEN_MAX_USES"
-    echo -e "  Endpoint Mode:  $ENDPOINT_MODE"
+    echo -e "  Token Expiry:        $TOKEN_EXPIRY"
+    echo -e "  Token Max Uses:      $TOKEN_MAX_USES"
+    echo -e "  Endpoint Mode:       $ENDPOINT_MODE"
+    if [ "$TOKEN_INFO_ENABLED" = "true" ]; then
+        echo -e "  Token Info Enabled:  ${YELLOW}Yes${NC} (tokens can query usage)"
+    else
+        echo -e "  Token Info Enabled:  ${GREEN}No${NC} (secure by default)"
+    fi
     echo ""
     echo -e "${BOLD}Azure AD / Entra ID:${NC}"
     if [ "$CONFIGURE_AZURE" = "true" ]; then
@@ -916,6 +951,14 @@ ENDPOINT_MODE=$ENDPOINT_MODE
 # READ_ONLY_MODE=false
 
 # ============================================================================
+# Token Information Disclosure (v2.9.0 Security Enhancement)
+# ============================================================================
+# Allow tokens to query their own usage details via /api/token/info
+# Default: false (secure by default - stolen tokens can't reveal their status)
+# Set to 'true' to enable detailed token introspection and error messages
+TOKEN_INFO_ENABLED=$TOKEN_INFO_ENABLED
+
+# ============================================================================
 # Azure AD / Entra ID Configuration (v2.7.0)
 # ============================================================================
 # Enable Azure audit alongside on-premises AD audit
@@ -1047,6 +1090,9 @@ get_token() {
         print_info "Or run: $DOCKER_COMPOSE_CMD logs | grep 'API Token'"
     else
         print_success "Token retrieved from file"
+
+        # Save token to persistent storage (v2.9.0)
+        save_token "$TOKEN"
     fi
 }
 
@@ -1269,6 +1315,45 @@ show_summary() {
 # Utility Functions
 ################################################################################
 
+################################################################################
+# Token Management Functions (v2.9.0)
+################################################################################
+
+# Save token to persistent storage (v2.9.0)
+# Tokens are saved to /root/ad-collector/.token for secure persistence
+save_token() {
+    local token="$1"
+    local token_dir="/root/ad-collector"
+    local token_file="$token_dir/.token"
+
+    if [ -z "$token" ]; then
+        print_error "No token provided to save_token()"
+        return 1
+    fi
+
+    # Create directory if it doesn't exist
+    mkdir -p "$token_dir"
+    chmod 700 "$token_dir"
+
+    # Save token
+    echo "$token" > "$token_file"
+    chmod 600 "$token_file"
+
+    print_success "Token saved to: $token_file"
+}
+
+# Load token from persistent storage (v2.9.0)
+load_saved_token() {
+    local token_file="/root/ad-collector/.token"
+
+    if [ -f "$token_file" ]; then
+        cat "$token_file" | tr -d '\n'
+        return 0
+    fi
+
+    return 1
+}
+
 reset_token() {
     print_header "Resetting API Token"
 
@@ -1397,11 +1482,15 @@ reset_token() {
         echo -e "  Endpoint Mode:  ${GREEN}$NEW_ENDPOINT_MODE${NC}"
         echo ""
         echo -e "${YELLOW}⚠️  Token will not be shown in logs (SHOW_TOKEN disabled)${NC}"
-        echo -e "${YELLOW}   Save it now - you can regenerate with: ./install.sh --reset-token${NC}"
+        echo -e "${YELLOW}   Saving token to persistent storage...${NC}"
         echo ""
 
-        # Ask to delete token file
-        read -p "Delete token file for security? (Y/n): " delete_token
+        # Save token to persistent storage (v2.9.0)
+        save_token "$NEW_TOKEN"
+        echo ""
+
+        # Ask to delete temporary token file
+        read -p "Delete temporary token file for security? (Y/n): " delete_token
         if [ -z "$delete_token" ] || [ "$delete_token" = "y" ] || [ "$delete_token" = "Y" ]; then
             rm -f ./token-data/ad-collector-token.txt
             chmod 700 ./token-data 2>/dev/null || true
@@ -1427,14 +1516,22 @@ show_token() {
 
     print_step "Retrieving current token..."
 
-    # Try to read from token file first
-    if [ -f "./token-data/ad-collector-token.txt" ]; then
+    # Try persistent storage first (v2.9.0)
+    CURRENT_TOKEN=$(load_saved_token)
+
+    # Fallback: try temporary token file
+    if [ -z "$CURRENT_TOKEN" ] && [ -f "./token-data/ad-collector-token.txt" ]; then
         CURRENT_TOKEN=$(cat ./token-data/ad-collector-token.txt 2>/dev/null | tr -d '\n')
     fi
 
     # If no token file, explain and offer to reset
     if [ -z "$CURRENT_TOKEN" ]; then
-        print_warning "Token file not found (deleted for security after installation)"
+        print_warning "Token file not found"
+        echo ""
+        echo -e "${CYAN}Possible reasons:${NC}"
+        echo -e "  - Token was never generated"
+        echo -e "  - Persistent storage (/root/ad-collector/.token) doesn't exist"
+        echo -e "  - Temporary token file was deleted for security"
         echo ""
         echo -e "${CYAN}To generate a new token, run:${NC}"
         echo -e "  ${YELLOW}./install.sh --reset-token${NC}"
@@ -1451,9 +1548,10 @@ show_token() {
         echo ""
         echo -e "${CYAN}$CURRENT_TOKEN${NC}"
         echo ""
+        echo -e "${GREEN}Token is stored in: /root/ad-collector/.token${NC}"
+        echo ""
     else
         print_error "Could not retrieve token"
-        print_info "Token file: ./token may not exist"
         print_info "Container may not be running. Start it with: $DOCKER_COMPOSE_CMD up -d"
     fi
 }
@@ -1692,6 +1790,28 @@ update() {
         echo -e "  Token Max Uses: ${GREEN}$NEW_MAX_USES${NC}"
         echo -e "  Endpoint Mode:  ${GREEN}$NEW_ENDPOINT_MODE${NC}"
         echo ""
+
+        # Offer to display current token (v2.9.0)
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        read -p "Display current API token? (y/n) [n]: " -n 1 -r
+        echo ""
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # Try to load from persistent storage
+            CURRENT_TOKEN=$(load_saved_token)
+            if [ -n "$CURRENT_TOKEN" ]; then
+                echo -e "${BOLD}Current API Token:${NC}"
+                echo ""
+                echo -e "${GREEN}$CURRENT_TOKEN${NC}"
+                echo ""
+                echo -e "${CYAN}Token location: /root/ad-collector/.token${NC}"
+                echo ""
+            else
+                print_warning "Token not found in persistent storage"
+                print_info "You may need to regenerate it: ./install.sh --reset-token"
+                echo ""
+            fi
+        fi
     else
         print_error "Update failed - container not running"
         print_info "Check logs: $DOCKER_COMPOSE_CMD logs"
@@ -1755,6 +1875,7 @@ show_usage() {
     echo "  --update           Update to latest version"
     echo "  --reset-token      Regenerate API token"
     echo "  --get-token        Display current API token"
+    echo "  --show-token       Display current API token (alias for --get-token)"
     echo "  --status           Show collector status"
     echo "  --uninstall        Remove AD Collector"
     echo "  --help             Show this help message"
@@ -1772,7 +1893,7 @@ main() {
             reset_token
             exit 0
             ;;
-        --get-token)
+        --get-token|--show-token)
             show_token
             exit 0
             ;;

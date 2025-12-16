@@ -1,10 +1,10 @@
 # AD Collector API Guide
 
-## Version: 2.8.0
+## Version: 2.9.0
 
 This guide describes all available API endpoints in the Docker AD Collector for n8n.
 
-**Version 2.8.0:** API harmonization with provider-specific endpoints, detailed test connections with domain/tenant info, global status endpoint, and sensitive data masking
+**Version 2.9.0:** Token management endpoints, enhanced error messages with standardized codes, secure token info disclosure control, and persistent token storage
 
 ---
 
@@ -36,6 +36,7 @@ This guide describes all available API endpoints in the Docker AD Collector for 
 | `API_TOKEN` | Custom JWT token | Auto-generated |
 | `TOKEN_EXPIRY` | Token validity duration | `7d` |
 | `TOKEN_MAX_USES` | Max uses per token (anti-theft) | `10` |
+| `TOKEN_INFO_ENABLED` | Allow tokens to query their usage details (v2.9.0) | `false` |
 | `SHOW_TOKEN` | Show token in logs | `false` |
 
 #### Access Control (v2.4.0+)
@@ -110,6 +111,112 @@ curl http://localhost:8443/health
   "status": "ok",
   "service": "ad-collector",
   "version": "1.1.1"
+}
+```
+
+---
+
+### Token Management Endpoints (v2.9.0)
+
+#### GET /api/token/info
+
+**NEW in v2.9.0** - Get detailed information about the current API token.
+
+**Security Note:** This endpoint is only available when `TOKEN_INFO_ENABLED=true` in the environment configuration. By default, it's disabled to prevent stolen tokens from revealing their usage details.
+
+**Why disabled by default?**
+- 🔒 **Anti-Theft Protection:** Prevents stolen tokens from checking if they're still valid or how many uses remain
+- 🔒 **Security by Default:** Attackers can't gather intelligence about token quotas
+- 🔒 **Minimal Information Disclosure:** Error messages hide details when disabled
+
+**When to enable:**
+- 🔓 Development/testing environments
+- 🔓 Trusted networks where token monitoring is needed
+- 🔓 Integration testing that requires token validation
+
+**Authentication required:** Yes
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -X GET http://localhost:8443/api/token/info \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Success response (when `TOKEN_INFO_ENABLED=true`):**
+```json
+{
+  "success": true,
+  "token": {
+    "valid": true,
+    "service": "ad-collector",
+    "issuer": "ad-collector",
+    "jti": "abc123...",
+    "expiration": {
+      "expiresAt": "2025-12-23T10:30:00.000Z",
+      "expiresIn": 604800,
+      "expiresInHuman": "7d",
+      "createdAt": "2025-12-16T10:30:00.000Z"
+    },
+    "usage": {
+      "used": 3,
+      "max": 10,
+      "remaining": 7,
+      "percentage": "30%",
+      "firstUse": "2025-12-16T10:35:00.000Z",
+      "lastUse": "2025-12-16T14:20:00.000Z"
+    }
+  }
+}
+```
+
+**Error response (when `TOKEN_INFO_ENABLED=false`):**
+```json
+{
+  "success": false,
+  "error": "Token information disclosure is disabled",
+  "code": "INFO_DISABLED",
+  "message": "Set TOKEN_INFO_ENABLED=true in .env to enable this endpoint"
+}
+```
+
+---
+
+#### GET /api/token/validate
+
+**NEW in v2.9.0** - Simple token validation endpoint that returns only a boolean.
+
+**Security Note:** This endpoint is **always available** regardless of `TOKEN_INFO_ENABLED` because it only returns a simple true/false without revealing any sensitive details.
+
+**Why always available?**
+- ✅ **Safe:** Only returns boolean, no sensitive information
+- ✅ **Useful:** Applications can check token validity without detailed info
+- ✅ **Fast:** Minimal processing, just validation check
+
+**Authentication required:** Yes
+
+**Example:**
+```bash
+TOKEN="your-api-token"
+
+curl -X GET http://localhost:8443/api/token/validate \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "valid": true
+}
+```
+
+**If token is expired or quota exceeded:**
+```json
+{
+  "success": true,
+  "valid": false
 }
 ```
 

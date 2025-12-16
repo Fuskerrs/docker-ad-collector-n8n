@@ -387,6 +387,88 @@ docker exec ad-collector node export-audit.js --output audit.json --pretty
 
 ##  Latest Updates
 
+### v2.9.0 (December 2025) 🔐 **TOKEN MANAGEMENT & SECURITY ENHANCEMENTS**
+**Secure Token Info Control, Enhanced Error Messages, and Persistent Token Storage**
+
+#### 🔐 Token Information Disclosure Control
+- ✅ **`TOKEN_INFO_ENABLED`** - Environment variable to control token info disclosure (default: `false`)
+  - When **DISABLED** (secure by default):
+    - Stolen tokens cannot query their remaining uses or expiration
+    - `/api/token/info` endpoint returns `403 Forbidden`
+    - Error messages hide usage details
+    - Response headers don't include token metadata
+  - When **ENABLED** (development/testing):
+    - `/api/token/info` shows detailed usage quota and expiration
+    - Response headers include `X-Token-*` metadata
+    - Error messages show actionable guidance
+- 🛡️ **Anti-Theft Protection** - Prevents attackers from gathering intelligence about stolen tokens
+- 🎯 **Use Case**: Production environments benefit from secure-by-default, dev environments can enable for debugging
+
+#### 📊 New Token Management Endpoints
+- ✅ **`GET /api/token/info`** - Detailed token information (only when `TOKEN_INFO_ENABLED=true`)
+  - Token validity status, expiration date, time remaining (human-readable)
+  - Usage quota: used/max/remaining/percentage
+  - First and last use timestamps
+  - Returns `403` when info disclosure is disabled
+- ✅ **`GET /api/token/validate`** - Simple validation endpoint (always available)
+  - Returns only boolean: `{"success": true, "valid": true/false}`
+  - Safe to use regardless of `TOKEN_INFO_ENABLED` setting
+  - No sensitive information disclosed
+
+#### 🔧 Enhanced Error Messages
+- ✅ **Standardized Error Codes** - All auth errors include machine-readable codes
+  - `MISSING_TOKEN` - Authorization header missing or invalid format
+  - `TOKEN_EXPIRED` - Token has expired (shows expiration time when info enabled)
+  - `INVALID_TOKEN` - Token signature/format invalid
+  - `QUOTA_EXCEEDED` - Token usage limit reached
+  - `INFO_DISABLED` - Token info endpoint called when disclosure disabled
+- ✅ **Conditional Details** - Error messages adapt based on `TOKEN_INFO_ENABLED`
+  - Secure mode: Minimal information, just error codes
+  - Development mode: Detailed guidance with timestamps and suggestions
+- ✅ **Actionable Guidance** - Error messages suggest next steps (when enabled)
+  - Example: "Generate a new token using: ./install.sh --reset-token"
+
+#### 💾 Persistent Token Storage
+- ✅ **Automatic Token Saving** - Tokens saved to `/root/ad-collector/.token`
+  - Secure permissions: `600` (owner read/write only)
+  - Survives container restarts and updates
+  - Used by `./install.sh --show-token` and `--get-token`
+- ✅ **Updated Install Script**
+  - `./install.sh` automatically saves token during installation
+  - `./install.sh --reset-token` saves new token to persistent storage
+  - `./install.sh --update` offers to display current token after update
+  - `./install.sh --show-token` alias for `--get-token` (both work)
+- 📂 **Token Lifecycle**: Temporary file → Display → Persistent storage → Optional deletion
+
+#### 📡 Response Headers (when `TOKEN_INFO_ENABLED=true`)
+- ✅ **Automatic Headers** - All API responses include token metadata
+  - `X-Token-Valid`: `true/false`
+  - `X-Token-Expires`: ISO 8601 expiration timestamp
+  - `X-Token-Expires-In`: Seconds until expiration
+  - `X-Token-Remaining`: Uses remaining (or "unlimited")
+  - `X-Token-Unlimited`: `true/false`
+- 🎯 **Use Case**: Monitor token health without dedicated endpoint calls
+
+#### 🛠️ Installation Script Updates
+- ✅ **`TOKEN_INFO_ENABLED` Question** - Added to interactive installation
+  - Clear explanation of security implications
+  - Default: disabled (secure by default)
+  - Shows recommendations for production vs development
+- ✅ **Token Display Options**
+  - `--show-token`: Display current token from persistent storage
+  - `--get-token`: Alias for `--show-token` (backward compatible)
+  - `--update`: Offers to display token after successful update
+  - `--reset-token`: Displays and saves new token
+- 📖 **Documentation**: See [API_GUIDE.md](API_GUIDE.md) for complete endpoint reference
+
+**Migration Notes:**
+- No breaking changes - all existing functionality preserved
+- `TOKEN_INFO_ENABLED` defaults to `false` (secure by default)
+- Existing tokens continue to work without modification
+- New endpoints are opt-in (require explicit environment variable)
+
+---
+
 ### v2.8.0 (December 2025) 🔄 **API HARMONIZATION & ENHANCED TESTING**
 **Provider-Specific Endpoints, Detailed Test Connections, and Global Status**
 

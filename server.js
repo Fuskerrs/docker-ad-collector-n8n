@@ -126,6 +126,34 @@ console.log('========================================\n');
 const app = express();
 app.use(express.json());
 
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Format duration in seconds to human-readable string
+ * @param {number} seconds - Duration in seconds
+ * @returns {string} Formatted duration (e.g., "5d 12h 30m")
+ */
+function formatDuration(seconds) {
+  if (seconds <= 0) return 'expired';
+
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+
+  return parts.join(' ') || '< 1m';
+}
+
+// ============================================================================
+// MIDDLEWARES
+// ============================================================================
+
 // Rate limiting middleware (configurable via environment variables)
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1 minute default
@@ -141,8 +169,14 @@ if (process.env.RATE_LIMIT_ENABLED !== 'false') {
   app.use(limiter);
 }
 
-// In-memory cache for last audit result (avoid re-running audit on fallback)
-let lastAuditCache = {
+// In-memory caches for last audit results (separate per provider - v2.9.0)
+let adAuditCache = {
+  result: null,
+  timestamp: null,
+  ttl: 5 * 60 * 1000 // 5 minutes TTL
+};
+
+let azureAuditCache = {
   result: null,
   timestamp: null,
   ttl: 5 * 60 * 1000 // 5 minutes TTL
@@ -217,11 +251,60 @@ loadTokenUsageStore();
 // Schedule periodic cleanup (every 5 minutes)
 setInterval(cleanupExpiredTokens, 5 * 60 * 1000);
 
-// Authentication middleware
+// ============================================================================
+// TOKEN INFO HEADERS MIDDLEWARE (v2.9.0)
+// ============================================================================
+// Add token information headers to all responses (if TOKEN_INFO_ENABLED=true)
+// This middleware must be placed BEFORE authenticate middleware
+app.use((req, res, next) => {
+  // Store original res.json
+  const originalJson = res.json.bind(res);
+
+  // Override res.json to add headers before sending response
+  res.json = function(data) {
+    // Add headers if token info disclosure is enabled and user is authenticated
+    if (process.env.TOKEN_INFO_ENABLED === 'true' && req.user) {
+      const decoded = req.user;
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = decoded.exp - now;
+
+      res.setHeader('X-Token-Valid', expiresIn > 0 ? 'true' : 'false');
+      res.setHeader('X-Token-Expires', new Date(decoded.exp * 1000).toISOString());
+      res.setHeader('X-Token-Expires-In', Math.max(0, expiresIn));
+
+      // Add usage info if available
+      if (decoded.jti && tokenUsageStore[decoded.jti]) {
+        const usage = tokenUsageStore[decoded.jti];
+        const unlimited = usage.max_uses === -1;
+        const remaining = unlimited ? 'unlimited' : Math.max(0, usage.max_uses - usage.used_count);
+
+        res.setHeader('X-Token-Remaining', remaining.toString());
+        res.setHeader('X-Token-Unlimited', unlimited.toString());
+      }
+    }
+
+    return originalJson(data);
+  };
+
+  next();
+});
+
+// ============================================================================
+// AUTHENTICATION & AUTHORIZATION MIDDLEWARES
+// ============================================================================
+
+// Authentication middleware (v2.9.0 - Enhanced error messages)
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
+
+  // Check for missing token
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      code: 'MISSING_TOKEN',
+      message: 'Authorization header with Bearer token is required'
+    });
   }
 
   const token = authHeader.split(' ')[1];
@@ -239,11 +322,46 @@ function authenticate(req, res, next) {
       maxAge: process.env.TOKEN_EXPIRY || '1h'  // Validate expiration
     });
 
+    // Explicit expiration check for detailed error response
+    const now = Math.floor(Date.now() / 1000);
+    if (decoded.exp && decoded.exp < now) {
+      const response = {
+        success: false,
+        error: 'Token expired',
+        code: 'TOKEN_EXPIRED'
+      };
+
+      // Add details if TOKEN_INFO_ENABLED=true (v2.9.0 Security Feature)
+      if (process.env.TOKEN_INFO_ENABLED === 'true') {
+        const expiredSince = now - decoded.exp;
+        response.details = {
+          expired: true,
+          expiredAt: new Date(decoded.exp * 1000).toISOString(),
+          expiredSince: formatDuration(expiredSince) + ' ago'
+        };
+        response.action = 'Generate a new token using: ./install.sh --reset-token';
+      }
+
+      return res.status(401).json(response);
+    }
+
     // Attach decoded payload to request for future use
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token', details: err.message });
+    const response = {
+      success: false,
+      error: 'Invalid token',
+      code: 'INVALID_TOKEN'
+    };
+
+    // Add details if TOKEN_INFO_ENABLED=true (v2.9.0 Security Feature)
+    if (process.env.TOKEN_INFO_ENABLED === 'true') {
+      response.details = err.message;
+      response.action = 'Check token format and ensure it matches the collector\'s JWT_SECRET';
+    }
+
+    return res.status(401).json(response);
   }
 }
 
@@ -283,19 +401,28 @@ function checkTokenUsageQuota(req, res, next) {
     tokenUsageStore[jti] = entry;
   }
 
-  // Check if token has reached its usage limit
+  // Check if token has reached its usage limit (v2.9.0 - Enhanced error response)
   if (entry.used_count >= entry.max_uses) {
-    return res.status(429).json({
+    const response = {
+      success: false,
       error: 'Token usage limit reached',
-      message: `This token has been used ${entry.used_count} times (limit: ${entry.max_uses})`,
-      details: {
+      code: 'QUOTA_EXCEEDED',
+      message: `This token has been exhausted`
+    };
+
+    // Add details if TOKEN_INFO_ENABLED=true (v2.9.0 Security Feature)
+    if (process.env.TOKEN_INFO_ENABLED === 'true') {
+      response.details = {
         jti: jti,
         used_count: entry.used_count,
         max_uses: entry.max_uses,
         first_use: new Date(entry.first_use).toISOString(),
         last_use: entry.last_use ? new Date(entry.last_use).toISOString() : null
-      }
-    });
+      };
+      response.action = 'Generate a new token using: ./install.sh --reset-token';
+    }
+
+    return res.status(429).json(response);
   }
 
   // Increment usage counter
@@ -754,6 +881,108 @@ function getUserDetails(user) {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'ad-collector', version: APP_VERSION });
+});
+
+// ============================================================================
+// TOKEN MANAGEMENT ENDPOINTS (v2.9.0)
+// ============================================================================
+
+/**
+ * GET /api/token/info - Get detailed token information
+ *
+ * Security: Only available if TOKEN_INFO_ENABLED=true (default: false)
+ * This prevents stolen tokens from revealing usage details.
+ *
+ * Returns:
+ * - Token validity status
+ * - Expiration date and time remaining
+ * - Usage quota (used/max)
+ * - First and last use timestamps
+ */
+app.get('/api/token/info', authenticate, (req, res) => {
+  // Check if token info disclosure is enabled
+  if (process.env.TOKEN_INFO_ENABLED !== 'true') {
+    return res.status(403).json({
+      success: false,
+      error: 'Token information disclosure is disabled',
+      code: 'INFO_DISABLED',
+      message: 'Set TOKEN_INFO_ENABLED=true in .env to enable this endpoint'
+    });
+  }
+
+  const decoded = req.user;
+  const now = Math.floor(Date.now() / 1000);
+  const expiresIn = decoded.exp - now;
+
+  const response = {
+    success: true,
+    token: {
+      valid: expiresIn > 0,
+      service: decoded.service || 'ad-collector',
+      issuer: decoded.iss,
+      jti: decoded.jti,
+      expiration: {
+        expiresAt: new Date(decoded.exp * 1000).toISOString(),
+        expiresIn: Math.max(0, expiresIn),
+        expiresInHuman: expiresIn > 0 ? formatDuration(expiresIn) : 'expired',
+        createdAt: decoded.created ? new Date(decoded.created).toISOString() : null
+      }
+    }
+  };
+
+  // Add usage information if available
+  if (decoded.jti && tokenUsageStore[decoded.jti]) {
+    const usage = tokenUsageStore[decoded.jti];
+    const unlimited = usage.max_uses === -1;
+    const remaining = unlimited ? 'unlimited' : Math.max(0, usage.max_uses - usage.used_count);
+
+    response.token.usage = {
+      used: usage.used_count,
+      max: unlimited ? 'unlimited' : usage.max_uses,
+      remaining: remaining,
+      percentage: unlimited ? 'N/A' : Math.round((usage.used_count / usage.max_uses) * 100) + '%',
+      firstUse: usage.first_use ? new Date(usage.first_use).toISOString() : null,
+      lastUse: usage.last_use ? new Date(usage.last_use).toISOString() : null
+    };
+  } else {
+    response.token.usage = {
+      tracking: 'disabled',
+      message: 'Token usage tracking is disabled or this is a legacy token'
+    };
+  }
+
+  res.json(response);
+});
+
+/**
+ * GET /api/token/validate - Simple token validation endpoint
+ *
+ * Security: Always available (no sensitive info disclosed)
+ * Returns only basic validation status without revealing details.
+ * Safe to use even if TOKEN_INFO_ENABLED=false
+ *
+ * Returns:
+ * - valid: boolean (is token valid and not expired)
+ * - That's it! No other information disclosed.
+ */
+app.get('/api/token/validate', authenticate, (req, res) => {
+  const decoded = req.user;
+  const now = Math.floor(Date.now() / 1000);
+  const valid = decoded.exp && decoded.exp > now;
+
+  // Check quota if enabled
+  let quotaExceeded = false;
+  if (decoded.jti && tokenUsageStore[decoded.jti]) {
+    const usage = tokenUsageStore[decoded.jti];
+    if (usage.max_uses !== -1 && usage.used_count >= usage.max_uses) {
+      quotaExceeded = true;
+    }
+  }
+
+  res.json({
+    success: true,
+    valid: valid && !quotaExceeded
+  });
 });
 
 // Global status cache (30 seconds)
@@ -3591,8 +3820,8 @@ app.post('/api/audit', authenticate, requireAuditAccess, checkTokenUsageQuota, a
       };
     }
 
-    // Cache the result for fallback (5 min TTL)
-    lastAuditCache = {
+    // Cache the result for fallback (5 min TTL) - v2.9.0: AD-specific cache
+    adAuditCache = {
       result: response,
       timestamp: Date.now()
     };
@@ -5708,8 +5937,8 @@ app.post('/api/audit/stream', authenticate, requireAuditAccess, checkTokenUsageQ
       };
     }
 
-    // Cache the result for fallback (5 min TTL)
-    lastAuditCache = {
+    // Cache the result for fallback (5 min TTL) - v2.9.0: AD-specific cache
+    adAuditCache = {
       result: finalResponse,
       timestamp: Date.now()
     };
@@ -5728,149 +5957,6 @@ app.post('/api/audit/stream', authenticate, requireAuditAccess, checkTokenUsageQ
     res.write(`event: error\n`);
     res.write(`data: ${JSON.stringify({ success: false, error: error.message })}\n\n`);
     res.end();
-  }
-});
-
-// ============================================================================
-// AUDIT EXPORT ENDPOINT (v2.6.1)
-// ============================================================================
-// Export audit results as downloadable JSON file with optional filename
-// Useful for local network exports without exposing collector publicly
-// Supports all /api/audit features: includeDetails, includeComputers
-app.post('/api/audit/export', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
-  try {
-    const { includeDetails, includeComputers, filename, pretty } = req.body;
-
-    console.log(`[EXPORT] Starting audit export - includeDetails: ${includeDetails}, includeComputers: ${includeComputers}, filename: ${filename || 'auto'}`);
-
-    // Make internal request to /api/audit to get full audit data
-    // This ensures we use the exact same logic without code duplication
-    const http = require('http');
-    const postData = JSON.stringify({ includeDetails, includeComputers });
-
-    const options = {
-      hostname: '127.0.0.1',  // Use IPv4 explicitly to avoid IPv6 resolution issues
-      port: config.port,
-      path: '/api/audit',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData),
-        'Authorization': req.headers.authorization // Forward auth token
-      }
-    };
-
-    const auditReq = http.request(options, (auditRes) => {
-      let data = '';
-
-      auditRes.on('data', (chunk) => {
-        data += chunk;
-      });
-
-      auditRes.on('end', () => {
-        try {
-          const auditResult = JSON.parse(data);
-
-          if (!auditResult.success) {
-            return res.status(500).json(auditResult);
-          }
-
-          // Set download headers
-          const exportFilename = filename || `audit-${new Date().toISOString().split('T')[0]}.json`;
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Content-Disposition', `attachment; filename="${exportFilename}"`);
-
-          // Add custom headers with audit metadata
-          if (auditResult.audit && auditResult.audit.summary) {
-            const summary = auditResult.audit.summary;
-            const vulns = summary.vulnerabilities || {};
-
-            res.setHeader('X-Audit-Duration', auditResult.audit.metadata.duration);
-            res.setHeader('X-Audit-Users', summary.users || 0);
-            res.setHeader('X-Audit-Groups', summary.groups || 0);
-            res.setHeader('X-Audit-Computers', summary.computers || 0);
-            res.setHeader('X-Audit-Vulnerabilities-Total', vulns.total || 0);
-            res.setHeader('X-Audit-Vulnerabilities-Critical', vulns.critical || 0);
-            res.setHeader('X-Audit-Vulnerabilities-High', vulns.high || 0);
-            res.setHeader('X-Audit-Vulnerabilities-Medium', vulns.medium || 0);
-            res.setHeader('X-Audit-Vulnerabilities-Low', vulns.low || 0);
-            res.setHeader('X-Audit-Security-Score', vulns.score || 0);
-          }
-
-          // Send as downloadable JSON (pretty-print if requested)
-          const output = pretty ? JSON.stringify(auditResult, null, 2) : JSON.stringify(auditResult);
-          res.send(output);
-
-          console.log(`[EXPORT] Audit export completed successfully - ${exportFilename}`);
-
-        } catch (parseError) {
-          console.error('[EXPORT] Failed to parse audit response:', parseError);
-          res.status(500).json({
-            success: false,
-            error: 'Failed to parse audit response',
-            details: parseError.message
-          });
-        }
-      });
-    });
-
-    auditReq.on('error', (error) => {
-      console.error('[EXPORT] Internal audit request failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Internal audit request failed',
-        details: error.message
-      });
-    });
-
-    auditReq.write(postData);
-    auditReq.end();
-
-  } catch (error) {
-    console.error('[EXPORT] Error during audit export:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Get last audit result (cached, no re-run)
-app.get('/api/audit/last', authenticate, requireAuditAccess, (req, res) => {
-  try {
-    // Check if cache exists and is not expired
-    if (!lastAuditCache.result) {
-      return res.status(404).json({
-        success: false,
-        error: 'No cached audit result available. Run an audit first.',
-        cacheStatus: 'empty'
-      });
-    }
-
-    const cacheAge = Date.now() - lastAuditCache.timestamp;
-    if (cacheAge > lastAuditCache.ttl) {
-      return res.status(410).json({
-        success: false,
-        error: 'Cached audit result expired. Please run a new audit.',
-        cacheStatus: 'expired',
-        cacheAge: `${Math.floor(cacheAge / 1000)}s`
-      });
-    }
-
-    console.log(`[Audit Cache] Returning cached result (age: ${Math.floor(cacheAge / 1000)}s)`);
-
-    // Return cached result with cache metadata
-    res.json({
-      ...lastAuditCache.result,
-      cacheMetadata: {
-        cached: true,
-        cacheAge: `${Math.floor(cacheAge / 1000)}s`,
-        cachedAt: new Date(lastAuditCache.timestamp).toISOString()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -5922,6 +6008,389 @@ app.post('/api/audit/azure/stream', authenticate, requireAuditAccess, checkToken
 
 // Azure audit status - check if Azure is configured
 app.post('/api/audit/azure/status', authenticate, azureStatusHandler);
+
+// ========== HARMONIZED AUDIT ENDPOINTS (v2.9.0) ==========
+// Provider-specific export, last, and non-streaming endpoints for AD and Azure
+
+// ===== AD (Active Directory) Provider =====
+
+// AD Audit Export - downloadable JSON with metadata headers
+app.post('/api/audit/ad/export', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
+  try {
+    const { includeDetails, includeComputers, filename, pretty } = req.body;
+
+    console.log(`[AD EXPORT] Starting AD audit export - includeDetails: ${includeDetails}, includeComputers: ${includeComputers}`);
+
+    // Make internal request to /api/audit
+    const http = require('http');
+    const postData = JSON.stringify({ includeDetails, includeComputers });
+
+    const options = {
+      hostname: '127.0.0.1',
+      port: config.port,
+      path: '/api/audit',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'Authorization': req.headers.authorization
+      }
+    };
+
+    const auditReq = http.request(options, (auditRes) => {
+      let data = '';
+
+      auditRes.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      auditRes.on('end', () => {
+        try {
+          const auditResult = JSON.parse(data);
+
+          if (!auditResult.success) {
+            return res.status(500).json(auditResult);
+          }
+
+          // Set download headers
+          const exportFilename = filename || `ad-audit-${new Date().toISOString().split('T')[0]}.json`;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename="${exportFilename}"`);
+
+          // Add metadata headers
+          if (auditResult.audit && auditResult.audit.summary) {
+            const summary = auditResult.audit.summary;
+            const vulns = summary.vulnerabilities || {};
+
+            res.setHeader('X-Audit-Provider', 'active-directory');
+            res.setHeader('X-Audit-Duration', auditResult.audit.metadata.duration);
+            res.setHeader('X-Audit-Users', summary.users || 0);
+            res.setHeader('X-Audit-Groups', summary.groups || 0);
+            res.setHeader('X-Audit-Computers', summary.computers || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Total', vulns.total || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Critical', vulns.critical || 0);
+            res.setHeader('X-Audit-Vulnerabilities-High', vulns.high || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Medium', vulns.medium || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Low', vulns.low || 0);
+            res.setHeader('X-Audit-Security-Score', vulns.score || 0);
+          }
+
+          const output = pretty ? JSON.stringify(auditResult, null, 2) : JSON.stringify(auditResult);
+          res.send(output);
+
+          console.log(`[AD EXPORT] Export completed - ${exportFilename}`);
+
+        } catch (parseError) {
+          res.status(500).json({
+            success: false,
+            error: 'Failed to parse audit response',
+            details: parseError.message
+          });
+        }
+      });
+    });
+
+    auditReq.on('error', (error) => {
+      res.status(500).json({
+        success: false,
+        error: 'Internal audit request failed',
+        details: error.message
+      });
+    });
+
+    auditReq.write(postData);
+    auditReq.end();
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// AD Audit Last - get cached AD audit result
+app.get('/api/audit/ad/last', authenticate, requireAuditAccess, (req, res) => {
+  try {
+    if (!adAuditCache.result) {
+      return res.status(404).json({
+        success: false,
+        provider: 'active-directory',
+        error: 'No cached AD audit result available. Run an AD audit first.',
+        cacheStatus: 'empty'
+      });
+    }
+
+    const cacheAge = Date.now() - adAuditCache.timestamp;
+    if (cacheAge > adAuditCache.ttl) {
+      return res.status(410).json({
+        success: false,
+        provider: 'active-directory',
+        error: 'Cached AD audit result expired. Please run a new audit.',
+        cacheStatus: 'expired',
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`
+      });
+    }
+
+    console.log(`[AD CACHE] Returning cached AD audit (age: ${Math.floor(cacheAge / 1000)}s)`);
+
+    res.json({
+      ...adAuditCache.result,
+      cacheMetadata: {
+        cached: true,
+        provider: 'active-directory',
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`,
+        cachedAt: new Date(adAuditCache.timestamp).toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ===== Azure (Entra ID) Provider =====
+
+// Azure Audit without streaming - wrapper that collects SSE results
+app.post('/api/audit/azure', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
+  try {
+    const { skipPremiumCheck, includeRiskyUsers } = req.body;
+
+    console.log(`[AZURE AUDIT] Starting Azure audit (non-streaming) - skipPremiumCheck: ${skipPremiumCheck}, includeRiskyUsers: ${includeRiskyUsers}`);
+
+    // Make internal request to /api/audit/azure/stream and collect results
+    const http = require('http');
+    const postData = JSON.stringify({ skipPremiumCheck, includeRiskyUsers });
+
+    const options = {
+      hostname: '127.0.0.1',
+      port: config.port,
+      path: '/api/audit/azure/stream',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'Authorization': req.headers.authorization
+      }
+    };
+
+    const auditReq = http.request(options, (auditRes) => {
+      let sseData = '';
+      let finalResult = null;
+
+      auditRes.on('data', (chunk) => {
+        sseData += chunk.toString();
+      });
+
+      auditRes.on('end', () => {
+        try {
+          // Parse SSE events to find the final 'complete' event
+          const events = sseData.split('\n\n').filter(e => e.trim());
+
+          for (const event of events) {
+            const lines = event.split('\n');
+            let eventType = null;
+            let eventData = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                eventType = line.substring(7).trim();
+              } else if (line.startsWith('data: ')) {
+                eventData = line.substring(6).trim();
+              }
+            }
+
+            // Extract final result from 'complete' event
+            if (eventType === 'complete' && eventData) {
+              finalResult = JSON.parse(eventData);
+            }
+          }
+
+          if (!finalResult) {
+            return res.status(500).json({
+              success: false,
+              provider: 'azure-entra-id',
+              error: 'No complete event received from Azure audit stream'
+            });
+          }
+
+          // Cache the result
+          azureAuditCache = {
+            result: finalResult,
+            timestamp: Date.now()
+          };
+
+          res.json(finalResult);
+
+        } catch (parseError) {
+          res.status(500).json({
+            success: false,
+            provider: 'azure-entra-id',
+            error: 'Failed to parse Azure audit response',
+            details: parseError.message
+          });
+        }
+      });
+    });
+
+    auditReq.on('error', (error) => {
+      res.status(500).json({
+        success: false,
+        provider: 'azure-entra-id',
+        error: 'Internal Azure audit request failed',
+        details: error.message
+      });
+    });
+
+    auditReq.write(postData);
+    auditReq.end();
+
+  } catch (error) {
+    console.error('[AZURE AUDIT] Error:', error);
+    res.status(500).json({
+      success: false,
+      provider: 'azure-entra-id',
+      error: error.message
+    });
+  }
+});
+
+// Azure Audit Export - downloadable JSON with metadata headers
+app.post('/api/audit/azure/export', authenticate, requireAuditAccess, checkTokenUsageQuota, async (req, res) => {
+  try {
+    const { skipPremiumCheck, includeRiskyUsers, filename, pretty } = req.body;
+
+    console.log(`[AZURE EXPORT] Starting Azure audit export`);
+
+    // Make internal request to /api/audit/azure to get full audit data
+    const http = require('http');
+    const postData = JSON.stringify({ skipPremiumCheck, includeRiskyUsers });
+
+    const options = {
+      hostname: '127.0.0.1',
+      port: config.port,
+      path: '/api/audit/azure',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'Authorization': req.headers.authorization
+      }
+    };
+
+    const auditReq = http.request(options, (auditRes) => {
+      let data = '';
+
+      auditRes.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      auditRes.on('end', () => {
+        try {
+          const auditResult = JSON.parse(data);
+
+          if (!auditResult.success) {
+            return res.status(500).json(auditResult);
+          }
+
+          // Set download headers
+          const exportFilename = filename || `azure-audit-${new Date().toISOString().split('T')[0]}.json`;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename="${exportFilename}"`);
+
+          // Add metadata headers
+          if (auditResult.audit && auditResult.audit.summary) {
+            const summary = auditResult.audit.summary;
+            const vulns = summary.vulnerabilities || {};
+
+            res.setHeader('X-Audit-Provider', 'azure-entra-id');
+            res.setHeader('X-Audit-Duration', auditResult.audit.metadata.duration);
+            res.setHeader('X-Audit-Users', summary.users || 0);
+            res.setHeader('X-Audit-Groups', summary.groups || 0);
+            res.setHeader('X-Audit-Applications', summary.applications || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Total', vulns.total || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Critical', vulns.critical || 0);
+            res.setHeader('X-Audit-Vulnerabilities-High', vulns.high || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Medium', vulns.medium || 0);
+            res.setHeader('X-Audit-Vulnerabilities-Low', vulns.low || 0);
+            res.setHeader('X-Audit-Security-Score', vulns.score || 0);
+          }
+
+          const output = pretty ? JSON.stringify(auditResult, null, 2) : JSON.stringify(auditResult);
+          res.send(output);
+
+          console.log(`[AZURE EXPORT] Export completed - ${exportFilename}`);
+
+        } catch (parseError) {
+          res.status(500).json({
+            success: false,
+            provider: 'azure-entra-id',
+            error: 'Failed to parse Azure audit response',
+            details: parseError.message
+          });
+        }
+      });
+    });
+
+    auditReq.on('error', (error) => {
+      res.status(500).json({
+        success: false,
+        provider: 'azure-entra-id',
+        error: 'Internal Azure audit request failed',
+        details: error.message
+      });
+    });
+
+    auditReq.write(postData);
+    auditReq.end();
+
+  } catch (error) {
+    console.error('[AZURE EXPORT] Error:', error);
+    res.status(500).json({
+      success: false,
+      provider: 'azure-entra-id',
+      error: error.message
+    });
+  }
+});
+
+// Azure Audit Last - get cached Azure audit result
+app.get('/api/audit/azure/last', authenticate, requireAuditAccess, (req, res) => {
+  try {
+    if (!azureAuditCache.result) {
+      return res.status(404).json({
+        success: false,
+        provider: 'azure-entra-id',
+        error: 'No cached Azure audit result available. Run an Azure audit first.',
+        cacheStatus: 'empty'
+      });
+    }
+
+    const cacheAge = Date.now() - azureAuditCache.timestamp;
+    if (cacheAge > azureAuditCache.ttl) {
+      return res.status(410).json({
+        success: false,
+        provider: 'azure-entra-id',
+        error: 'Cached Azure audit result expired. Please run a new audit.',
+        cacheStatus: 'expired',
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`
+      });
+    }
+
+    console.log(`[AZURE CACHE] Returning cached Azure audit (age: ${Math.floor(cacheAge / 1000)}s)`);
+
+    res.json({
+      ...azureAuditCache.result,
+      cacheMetadata: {
+        cached: true,
+        provider: 'azure-entra-id',
+        cacheAge: `${Math.floor(cacheAge / 1000)}s`,
+        cachedAt: new Date(azureAuditCache.timestamp).toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ========== GROUP OPERATIONS ==========
 

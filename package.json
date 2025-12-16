@@ -1,7 +1,7 @@
 {
   "name": "ad-collector-n8n",
-  "version": "2.8.0",
-  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.8.0: API harmonization with provider-specific endpoints, detailed test connections, and global status",
+  "version": "2.9.0",
+  "description": "Active Directory Collector API for n8n-nodes-ad-admin - v2.9.0: Fully harmonized audit endpoints across all providers (AD, Azure, GWS) with unified structure",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
