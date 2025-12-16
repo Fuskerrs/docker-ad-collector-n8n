@@ -86,6 +86,93 @@ A secure, production-ready REST API for Active Directory security auditing and a
 
 ---
 
+## 🔒 Security & Simplicity First
+
+### Secure by Design
+
+**Zero External Exposure Required:**
+```bash
+# Air-gapped audit - NO API exposure needed
+docker exec ad-collector node export-audit.js --output audit.json --pretty
+
+# Copy to analysis workstation
+docker cp ad-collector:/tmp/audit.json ./security-audit.json
+```
+
+**Built-in Security Layers:**
+
+| Security Feature | Implementation | Benefit |
+|------------------|----------------|---------|
+| **JWT Authentication** | Token-based auth with configurable expiry (7d default) | Secure API access, no credentials in requests |
+| **Anti-Theft Protection** | Consumable tokens with usage quotas (3-100 uses or unlimited) | Prevents token leakage and unauthorized sharing |
+| **Rate Limiting** | 100 requests/minute per client (configurable) | DDoS protection, resource management |
+| **LDAP Injection Prevention** | Automatic parameter escaping and validation | Prevents malicious LDAP filter injection |
+| **TLS/SSL Support** | LDAPS (636) with optional certificate validation | Encrypted AD communication |
+| **Audit Trails** | All API calls logged with timestamps and user context | Compliance, forensics, monitoring |
+| **Token Persistence** | SQLite token usage database with automatic cleanup | Survives container restarts, manages quotas |
+| **Network Isolation** | Bind to 127.0.0.1 (localhost) or 0.0.0.0 (network) | Control access scope, prevent external exposure |
+
+### Deployment Flexibility
+
+**3 Security Modes:**
+
+1. **🔐 Air-Gapped (No Network Exposure)**
+   ```bash
+   # Run collector on internal network with BIND_ADDRESS=127.0.0.1
+   # Export audits locally using export-audit.js
+   # Copy files to analysis systems via USB/secure transfer
+   ```
+   - ✅ Perfect for: High-security environments, isolated networks, compliance requirements
+   - ✅ Zero external attack surface
+
+2. **🏢 Internal Network Only**
+   ```bash
+   # Bind to private IP (e.g., 10.10.0.21:8443)
+   # Accessible only from internal network
+   # Firewall blocks external access
+   ```
+   - ✅ Perfect for: Enterprise LANs, internal automation platforms
+   - ✅ No internet exposure, controlled access
+
+3. **🌐 Reverse Proxy (Public with Protection)**
+   ```bash
+   # Place behind nginx/Traefik with:
+   # - HTTPS termination
+   # - IP whitelisting
+   # - Additional authentication (Basic Auth, OAuth)
+   # - DDoS protection
+   ```
+   - ✅ Perfect for: Cloud deployments, SaaS integrations
+   - ✅ Multiple security layers, flexible access control
+
+### Installation Simplicity
+
+**One-Line Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fuskerrs/docker-ad-collector-n8n/main/install.sh | bash
+```
+
+**Interactive Configuration:**
+- Guided LDAP setup with connection testing
+- Automatic JWT token generation
+- Azure credentials configuration (optional)
+- Network binding selection (localhost vs network)
+- Access mode selection (full, audit-only, no-audit)
+- Token usage quota configuration
+
+**Zero Dependencies:**
+- Single Docker container (Node.js Alpine ~150MB)
+- No database required (SQLite embedded)
+- No external services needed
+- Works offline after installation
+
+**Update in 10 Seconds:**
+```bash
+cd ~/ad-collector && ./install.sh --update
+```
+
+---
+
 ## 🔧 How It Works
 
 ### Architecture Overview
