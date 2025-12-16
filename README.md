@@ -41,7 +41,7 @@ A secure, production-ready REST API for Active Directory security auditing and a
 
 **AD Collector** is a **standalone REST API server** for Active Directory security and automation. It provides two core capabilities:
 
-1. **🔍 Security Auditing** - Comprehensive Active Directory vulnerability assessment (87 detections)
+1. **🔍 Security Auditing** - Comprehensive vulnerability assessment (99+ detections: 87 on-premises AD + 12 Azure Entra ID)
 2. **⚙️ AD Management** - Safe automation of user/group/computer operations via REST API
 
 **Use it standalone** for security monitoring, compliance reporting, or integrate it with automation tools like [n8n](https://n8n.io) using the [n8n-nodes-ad-admin](https://github.com/Fuskerrs/n8n-nodes-ad-admin) community node.
@@ -72,7 +72,7 @@ A secure, production-ready REST API for Active Directory security auditing and a
 |  Certificate management per client |  Centralized certificate handling |
 |  Multiple connections per client |  Connection pooling and optimization |
 |  No rate limiting |  Built-in rate limiting and monitoring |
-|  No audit capabilities |  87 built-in vulnerability detections |
+|  No audit capabilities |  99+ built-in vulnerability detections (AD + Azure) |
 |  Manual security checks |  Automated compliance reporting |
 
 **Perfect for:**
@@ -137,7 +137,7 @@ A secure, production-ready REST API for Active Directory security auditing and a
 
 ### 🔍 Security Audit Engine
 
-The collector includes a **comprehensive Active Directory security assessment engine** that detects **87 vulnerability types** across users, groups, and computers.
+The collector includes a **comprehensive security assessment engine** that detects **99+ vulnerability types** across on-premises Active Directory (87 detections) and Azure Entra ID (12+ detections).
 
 #### What Gets Audited?
 
@@ -155,11 +155,19 @@ The collector includes a **comprehensive Active Directory security assessment en
 
 #### How Auditing Works
 
+**On-Premises AD:**
 1. **Connection** - Collector connects to AD using service account
 2. **Enumeration** - Queries users, groups, computers, GPOs, ADCS templates
 3. **Analysis** - Runs 87 detection rules against collected data
 4. **Scoring** - Calculates security score (0-100) based on findings
 5. **Export** - Returns JSON with vulnerabilities categorized by severity
+
+**Azure Entra ID:**
+1. **Authentication** - Microsoft Graph API authentication via client credentials
+2. **Enumeration** - Queries users, groups, roles, apps, Conditional Access policies
+3. **Analysis** - Runs 12+ detection rules (MFA, privileged access, risky users, etc.)
+4. **Scoring** - Calculates security score (0-100) based on findings
+5. **Export** - Returns JSON with hybrid format compatible with AD frontends
 
 #### Audit Modes
 
